@@ -559,7 +559,10 @@ class PuffeRL:
         s = Table(box=None, expand=True)
         remaining = 'A hair past a freckle'
         if sps != 0:
-            remaining = duration((config['total_timesteps'] - agent_steps)/sps, b2, c2)
+            remaining = 'Finished'
+            remaining_s = (config['total_timesteps'] - agent_steps)/sps
+            if remaining_s >= 0:
+                remaining = duration(remaining_s, b2, c2)
 
         s.add_column(f"{c1}Summary", justify='left', vertical='top', width=10)
         s.add_column(f"{c1}Value", justify='right', vertical='top', width=14)
