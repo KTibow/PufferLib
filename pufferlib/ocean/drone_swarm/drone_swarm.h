@@ -256,7 +256,7 @@ void set_target_orbit(DroneSwarm* env, int idx) {
     float z = sin(theta) * radius;
 
     Drone *agent = &env->agents[idx];
-    agent->target_pos = (Vec3){R*x, R*z, R*y}; // convert to z up 
+    agent->target_pos = (Vec3){R*x, R*z, R*y}; // convert to z up
     agent->target_vel = (Vec3){0.0f, 0.0f, 0.0f};
 }
 
@@ -407,10 +407,6 @@ void c_reset(DroneSwarm *env) {
         env->task = TASK_RACE;
     }
     */
-<<<<<<< HEAD
-    env->task = TASK_RACE;
-=======
->>>>>>> fa6c1d1231082e4dc57c96cdb8e33e6e6967f0a7
 
     for (int i = 0; i < env->num_agents; i++) {
         Drone *agent = &env->agents[i];
@@ -442,7 +438,7 @@ void c_reset(DroneSwarm *env) {
             } while (norm3(sub3(drone->pos, env->ring_buffer[0].pos)) < 2.0f*ring_radius);
         }
     }
- 
+
     compute_observations(env);
 }
 
