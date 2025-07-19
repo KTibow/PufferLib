@@ -27,8 +27,8 @@ class CoverageGrid(pufferlib.PufferEnv):
         else:
             raise ValueError(f"obs_type must be 'position' or 'distances', got {obs_type}")
         
-        # Action space: UP, DOWN, LEFT, RIGHT
-        self.single_action_space = gymnasium.spaces.Discrete(4)
+        # Action space: GO_FORWARD, GO_LEFT, GO_RIGHT
+        self.single_action_space = gymnasium.spaces.Discrete(3)
         
         self.render_mode = render_mode
         self.num_agents = num_envs
@@ -78,7 +78,7 @@ if __name__ == '__main__':
 
     # Cache some random actions for testing
     CACHE = 64
-    actions = np.random.randint(0, 4, (CACHE, N))
+    actions = np.random.randint(0, 3, (CACHE, N))
 
     import time
     start = time.time()
