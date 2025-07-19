@@ -154,6 +154,7 @@ MAKE_FUNCTIONS = {
     'checkers': 'Checkers',
     'asteroids': 'Asteroids',
     'roomba': 'Roomba',
+    'coverage_grid': 'CoverageGrid',
     'spaces': make_spaces,
     'multiagent': make_multiagent,
 }
