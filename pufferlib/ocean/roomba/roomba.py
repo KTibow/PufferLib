@@ -8,13 +8,17 @@ from pufferlib.ocean.roomba import binding
 
 class Roomba(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128, 
-                 room_width=8.0, room_height=6.0, max_steps=1000, buf=None, seed=0):
-        # Observation space: [bump_sensor, front_dist, right_dist, back_dist, left_dist]
+                 room_width=800.0, room_height=600.0, max_steps=1000, buf=None, seed=0):
+        # Observation space: [left_bumper_importance, right_bumper_importance]
+        # Bumper importance: 2.0=just hit, 0.0=not hit recently (decays over 2 seconds)
         self.single_observation_space = gymnasium.spaces.Box(
-            low=0.0, high=1.0, shape=(5,), dtype=np.float32)
+            low=np.array([0.0, 0.0]), 
+            high=np.array([2.0, 2.0]), 
+            shape=(2,), dtype=np.float32)
         
-        # Action space: STOP, FORWARD, BACKWARD, TURN_LEFT, TURN_RIGHT
-        self.single_action_space = gymnasium.spaces.Discrete(5)
+        # Action space: [left_wheel_speed, right_wheel_speed] in cm/s, capped at ±50
+        self.single_action_space = gymnasium.spaces.Box(
+            low=-50.0, high=50.0, shape=(2,), dtype=np.float32)
         
         self.render_mode = render_mode
         self.num_agents = num_envs
@@ -56,13 +60,13 @@ class Roomba(pufferlib.PufferEnv):
 if __name__ == '__main__':
     # Simple test of the environment
     N = 1
-    env = Roomba(num_envs=N, room_width=6.0, room_height=4.0, max_steps=500)
+    env = Roomba(num_envs=N, room_width=600.0, room_height=400.0, max_steps=500)
     env.reset()
     steps = 0
 
-    # Cache some random actions for testing
+    # Cache some random actions for testing (wheel speeds)
     CACHE = 1024
-    actions = np.random.randint(0, 5, (CACHE, N))
+    actions = np.random.uniform(-50, 50, (CACHE, N, 2))
 
     import time
     start = time.time()

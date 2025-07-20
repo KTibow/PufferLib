@@ -1,217 +1,227 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 #include "raylib.h"
+#include "box2d/box2d.h"
 
-const unsigned char STOP = 0;
-const unsigned char FORWARD = 1;
-const unsigned char BACKWARD = 2;
-const unsigned char TURN_LEFT = 3;
-const unsigned char TURN_RIGHT = 4;
-
-const float ROOMBA_RADIUS = 0.2f;
-const float MAX_SPEED = 1.0f;
-const float TURN_RATE = 2.0f;
-const float FRICTION = 0.95f;
+const float ROOMBA_RADIUS = 17.425f; // cm
+const float MAX_WHEEL_SPEED = 50.0f; // cm/s
+const float WHEELBASE = 23.5f; // cm
+const float FRICTION = 0.01f;
+const float BUMP_CLEARANCE = 1.0f; // cm - distance to back away before bumper clears
+const float BRUSH_WIDTH = 16.51f; // cm - 6.5" brush width
+const float BRUSH_DEPTH = 7.62f; // cm - 3" brush depth
+const float dt = 0.05f;
 
 typedef struct {
-    float coverage_percentage;
-    float dirt_cleaned;
     float collisions;
     float episode_return;
     float episode_length;
+    float dirt_collected;
     float n; // Required as the last field
 } Log;
 
 typedef struct {
     Log log;                     // Required field
-    float* observations;         // Required field. 5D: [bump, front_dist, right_dist, back_dist, left_dist]
-    int* actions;                // Required field. Discrete actions 0-4
+    float* observations;         // Required field. 2D: [left_bumper_importance, right_bumper_importance]
+    float* actions;              // Required field. 2D: [left_wheel_speed, right_wheel_speed] in cm/s
     float* rewards;              // Required field
     unsigned char* terminals;    // Required field
 
+    // Box2D components
+    b2WorldId world_id;
+    b2BodyId roomba_body_id;
+
     // Roomba state
-    float x, y;                  // Position in continuous space
-    float theta;                 // Orientation in radians
-    float speed;                 // Current forward speed
-    float angular_velocity;      // Current turning rate
+    float left_wheel_speed;      // Current left wheel speed in cm/s
+    float right_wheel_speed;     // Current right wheel speed in cm/s
 
     // Environment parameters
-    float room_width;
-    float room_height;
+    float room_width;            // Room width in cm
+    float room_height;           // Room height in cm
     int max_steps;
     int tick;
+    float episode_return;        // Accumulated episode return
 
     // Sensors
-    int bump_sensor;             // 1 if collision this step, 0 otherwise
-    float wall_distances[4];     // front, right, back, left distances to walls
-    
-    // Coverage tracking (simple grid)
-    int grid_width, grid_height; // Grid dimensions for coverage tracking
-    unsigned char* coverage_grid; // 0 = dirty, 1 = cleaned
-    int total_dirt;              // Total dirt tiles at start
-    int cleaned_dirt;            // Number of dirt tiles cleaned
+    int left_bumper;             // 1 if left bumper pressed, 0 otherwise
+    int right_bumper;            // 1 if right bumper pressed, 0 otherwise
+    float left_bumper_importance;     // Importance of left bumper hit: 2.0=just hit, 0.0=not hit recently
+    float right_bumper_importance;    // Importance of right bumper hit: 2.0=just hit, 0.0=not hit recently
 } Roomba;
 
 void add_log(Roomba* env) {
-    env->log.coverage_percentage = (env->total_dirt > 0) ? 
-        (float)env->cleaned_dirt / (float)env->total_dirt * 100.0f : 0.0f;
-    env->log.dirt_cleaned += env->cleaned_dirt;
-    env->log.collisions += env->bump_sensor;
+    env->log.collisions += (env->left_bumper || env->right_bumper) ? 1 : 0;
     env->log.episode_length += env->tick;
-    env->log.episode_return += env->rewards[0];
+    env->log.episode_return += env->episode_return;
     env->log.n++;
 }
 
-void update_wall_distances(Roomba* env) {
-    // Calculate distances to walls in 4 directions relative to roomba orientation
-    float cos_theta = cosf(env->theta);
-    float sin_theta = sinf(env->theta);
-    
-    // Front distance (direction roomba is facing)
-    float front_x = env->x + cos_theta * env->room_width;
-    float front_y = env->y + sin_theta * env->room_height;
-    env->wall_distances[0] = fminf(
-        fminf(env->room_width - env->x, env->x),
-        fminf(env->room_height - env->y, env->y)
-    );
-    
-    // Simplified: distance to nearest wall in each cardinal direction
-    env->wall_distances[0] = env->room_width - env->x;  // front (right wall)
-    env->wall_distances[1] = env->room_height - env->y; // right (top wall)  
-    env->wall_distances[2] = env->x;                    // back (left wall)
-    env->wall_distances[3] = env->y;                    // left (bottom wall)
-    
-    // Clamp to reasonable sensor range
-    for (int i = 0; i < 4; i++) {
-        env->wall_distances[i] = fmaxf(0.0f, fminf(env->wall_distances[i], 5.0f));
-    }
-}
-
-void init_dirt_grid(Roomba* env) {
-    // Create a grid for tracking dirt/coverage
-    env->grid_width = (int)(env->room_width * 2.0f);  // 0.5 unit resolution
-    env->grid_height = (int)(env->room_height * 2.0f);
-    
-    if (!env->coverage_grid) {
-        env->coverage_grid = (unsigned char*)calloc(env->grid_width * env->grid_height, sizeof(unsigned char));
-    }
-    
-    // Reset all tiles to dirty
-    memset(env->coverage_grid, 0, env->grid_width * env->grid_height);
-    env->total_dirt = env->grid_width * env->grid_height;
-    env->cleaned_dirt = 0;
-}
-
 void c_reset(Roomba* env) {
-    // Reset roomba to center of room with random orientation
-    env->x = env->room_width / 2.0f;
-    env->y = env->room_height / 2.0f;
-    env->theta = (float)(rand()) / RAND_MAX * 2.0f * 3.14159265359f;
-    env->speed = 0.0f;
-    env->angular_velocity = 0.0f;
-    env->tick = 0;
-    env->bump_sensor = 0;
-    
-    // Initialize dirt grid
-    init_dirt_grid(env);
-    
-    // Update initial sensor readings
-    update_wall_distances(env);
-    
-    // Set observations
-    env->observations[0] = (float)env->bump_sensor;
-    for (int i = 0; i < 4; i++) {
-        env->observations[i + 1] = env->wall_distances[i] / 5.0f; // Normalize to [0,1]
+    // Initialize Box2D world if not already done
+    if (!b2World_IsValid(env->world_id)) {
+        b2WorldDef world_def = b2DefaultWorldDef();
+        world_def.gravity = (b2Vec2){0, 0}; // No gravity for top-down 2D simulation
+        env->world_id = b2CreateWorld(&world_def);
+
+        // Create room walls
+        b2BodyDef wall_def = b2DefaultBodyDef();
+        wall_def.type = b2_staticBody;
+        b2ShapeDef wall_shape_def = b2DefaultShapeDef();
+        float wall_thickness = 1.0f;
+
+        // Wall data: {x, y, half_width, half_height}
+        float walls[4][4] = {
+            {env->room_width / 2.0f, -wall_thickness / 2.0f, env->room_width / 2.0f, wall_thickness / 2.0f}, // top
+            {env->room_width / 2.0f, env->room_height + wall_thickness / 2.0f, env->room_width / 2.0f, wall_thickness / 2.0f}, // bottom
+            {-wall_thickness / 2.0f, env->room_height / 2.0f, wall_thickness / 2.0f, env->room_height / 2.0f}, // left
+            {env->room_width + wall_thickness / 2.0f, env->room_height / 2.0f, wall_thickness / 2.0f, env->room_height / 2.0f} // right
+        };
+
+        for (int i = 0; i < 4; i++) {
+            wall_def.position = (b2Vec2){walls[i][0], walls[i][1]};
+            b2BodyId wall = b2CreateBody(env->world_id, &wall_def);
+            b2Polygon box = b2MakeBox(walls[i][2], walls[i][3]);
+            b2CreatePolygonShape(wall, &wall_shape_def, &box);
+        }
+
+        // Create roomba body
+        b2BodyDef roomba_def = b2DefaultBodyDef();
+        roomba_def.type = b2_dynamicBody;
+        roomba_def.position = (b2Vec2){env->room_width / 2.0f, env->room_height / 2.0f};
+        roomba_def.linearDamping = 2.0f;
+        roomba_def.angularDamping = 2.0f;
+        env->roomba_body_id = b2CreateBody(env->world_id, &roomba_def);
+
+        b2Circle roomba_circle;
+        roomba_circle.center = (b2Vec2){0, 0};
+        roomba_circle.radius = ROOMBA_RADIUS - BUMP_CLEARANCE;
+
+        b2ShapeDef roomba_shape_def = b2DefaultShapeDef();
+        roomba_shape_def.density = 1.0f;
+        b2CreateCircleShape(env->roomba_body_id, &roomba_shape_def, &roomba_circle);
     }
+
+    // Reset roomba to center of room with random orientation
+    b2Vec2 center_pos = {env->room_width / 2.0f, env->room_height / 2.0f};
+    float random_angle = (float)(rand()) / RAND_MAX * 2.0f * PI;
+
+    b2Body_SetTransform(env->roomba_body_id, center_pos, b2MakeRot(random_angle));
+    b2Body_SetLinearVelocity(env->roomba_body_id, (b2Vec2){0, 0});
+    b2Body_SetAngularVelocity(env->roomba_body_id, 0);
+
+    env->left_wheel_speed = 0.0f;
+    env->right_wheel_speed = 0.0f;
+    env->tick = 0;
+    env->episode_return = 0.0f;
+    env->left_bumper = 0;
+    env->right_bumper = 0;
+    env->left_bumper_importance = 0.0f;
+    env->right_bumper_importance = 0.0f;
+
+    // Set initial observations: [left_bumper_importance, right_bumper_importance]
+    env->observations[0] = env->left_bumper_importance;
+    env->observations[1] = env->right_bumper_importance;
 }
 
 void c_step(Roomba* env) {
     env->tick += 1;
-    env->bump_sensor = 0;
+    env->left_bumper = 0;
+    env->right_bumper = 0;
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0;
-    
-    // Process action
-    int action = env->actions[0];
-    float target_speed = 0.0f;
-    float target_angular_vel = 0.0f;
-    
-    switch (action) {
-        case STOP:
-            target_speed = 0.0f;
-            target_angular_vel = 0.0f;
+
+    // Decrement bumper importance over time (minimum 0.0)
+    env->left_bumper_importance = fmaxf(0.0f, env->left_bumper_importance - dt);
+    env->right_bumper_importance = fmaxf(0.0f, env->right_bumper_importance - dt);
+
+    // Get wheel speed commands from actions (clamped to [-50, 50] cm/s)
+    float target_left = fmaxf(-MAX_WHEEL_SPEED, fminf(MAX_WHEEL_SPEED, env->actions[0]));
+    float target_right = fmaxf(-MAX_WHEEL_SPEED, fminf(MAX_WHEEL_SPEED, env->actions[1]));
+
+    // Apply wheel speed commands with friction
+    env->left_wheel_speed = env->left_wheel_speed * FRICTION + target_left * (1.0f - FRICTION);
+    env->right_wheel_speed = env->right_wheel_speed * FRICTION + target_right * (1.0f - FRICTION);
+
+    // Convert wheel speeds to linear and angular velocity
+    float linear_velocity = (env->left_wheel_speed + env->right_wheel_speed) / 2.0f; // cm/s
+    float angular_velocity = (env->right_wheel_speed - env->left_wheel_speed) / WHEELBASE; // rad/s
+
+    // Get current transform and set Box2D velocities
+    b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
+    float current_angle = b2Rot_GetAngle(transform.q);
+
+    b2Vec2 velocity = {
+        linear_velocity * cosf(current_angle),
+        linear_velocity * sinf(current_angle)
+    };
+    b2Body_SetLinearVelocity(env->roomba_body_id, velocity);
+    b2Body_SetAngularVelocity(env->roomba_body_id, angular_velocity);
+
+    // Step Box2D simulation
+    b2World_Step(env->world_id, dt, 4);
+
+    // Bump detection: check if bumper points are outside room (simplified from original)
+    b2Vec2 pos = b2Body_GetPosition(env->roomba_body_id);
+
+    // Check left bumper arc (theta - PI/36 to theta - PI/2)
+    for (float angle_offset = current_angle - PI/36; angle_offset > current_angle - PI/2; angle_offset -= PI/36) {
+        float sample_x = pos.x + ROOMBA_RADIUS * cosf(angle_offset);
+        float sample_y = pos.y + ROOMBA_RADIUS * sinf(angle_offset);
+        if (sample_x <= 0 || sample_x >= env->room_width ||
+            sample_y <= 0 || sample_y >= env->room_height) {
+            env->left_bumper = 1;
+            env->left_bumper_importance = 2.0f;
             break;
-        case FORWARD:
-            target_speed = MAX_SPEED;
-            target_angular_vel = 0.0f;
-            break;
-        case BACKWARD:
-            target_speed = -MAX_SPEED * 0.5f;
-            target_angular_vel = 0.0f;
-            break;
-        case TURN_LEFT:
-            target_speed = MAX_SPEED * 0.3f;
-            target_angular_vel = TURN_RATE;
-            break;
-        case TURN_RIGHT:
-            target_speed = MAX_SPEED * 0.3f;
-            target_angular_vel = -TURN_RATE;
-            break;
-    }
-    
-    // Update velocities with simple dynamics
-    env->speed = env->speed * FRICTION + target_speed * (1.0f - FRICTION);
-    env->angular_velocity = env->angular_velocity * FRICTION + target_angular_vel * (1.0f - FRICTION);
-    
-    // Update position and orientation
-    float dt = 0.1f;  // Fixed time step
-    env->x += env->speed * cosf(env->theta) * dt;
-    env->y += env->speed * sinf(env->theta) * dt;
-    env->theta += env->angular_velocity * dt;
-    
-    // Normalize angle to [0, 2π]
-    while (env->theta < 0) env->theta += 2.0f * 3.14159265359f;
-    while (env->theta >= 2.0f * 3.14159265359f) env->theta -= 2.0f * 3.14159265359f;
-    
-    // Check if roomba cleaned any dirt at current position
-    int grid_x = (int)(env->x * 2.0f);  // Convert to grid coordinates
-    int grid_y = (int)(env->y * 2.0f);
-    if (grid_x >= 0 && grid_x < env->grid_width && grid_y >= 0 && grid_y < env->grid_height) {
-        int grid_idx = grid_y * env->grid_width + grid_x;
-        if (env->coverage_grid[grid_idx] == 0) {  // If tile is dirty
-            env->coverage_grid[grid_idx] = 1;     // Clean it
-            env->cleaned_dirt++;
-            env->rewards[0] += 0.1f;  // Reward for cleaning dirt
         }
     }
-    
-    // Check wall collisions
-    if (env->x - ROOMBA_RADIUS <= 0.0f || env->x + ROOMBA_RADIUS >= env->room_width ||
-        env->y - ROOMBA_RADIUS <= 0.0f || env->y + ROOMBA_RADIUS >= env->room_height) {
-        
-        env->bump_sensor = 1;
-        env->rewards[0] -= 0.1f;  // Penalty for hitting wall
-        
-        // Push roomba back inside bounds
-        env->x = fmaxf(ROOMBA_RADIUS, fminf(env->room_width - ROOMBA_RADIUS, env->x));
-        env->y = fmaxf(ROOMBA_RADIUS, fminf(env->room_height - ROOMBA_RADIUS, env->y));
-        
-        // Stop forward movement
-        env->speed = 0.0f;
-    } else if (env->speed > 0.1f) {
-        env->rewards[0] += 0.01f;  // Small reward for moving
+
+    // Check right bumper arc (theta + PI/36 to theta + PI/2)
+    for (float angle_offset = current_angle + PI/36; angle_offset < current_angle + PI/2; angle_offset += PI/36) {
+        float sample_x = pos.x + ROOMBA_RADIUS * cosf(angle_offset);
+        float sample_y = pos.y + ROOMBA_RADIUS * sinf(angle_offset);
+        if (sample_x <= 0 || sample_x >= env->room_width ||
+            sample_y <= 0 || sample_y >= env->room_height) {
+            env->right_bumper = 1;
+            env->right_bumper_importance = 2.0f;
+            break;
+        }
     }
-    
-    // Update sensor readings
-    update_wall_distances(env);
-    
-    // Update observations
-    env->observations[0] = (float)env->bump_sensor;
-    for (int i = 0; i < 4; i++) {
-        env->observations[i + 1] = env->wall_distances[i] / 5.0f; // Normalize to [0,1]
+
+    // Check for wall collision using Box2D contacts
+    int wall_collision = 0;
+    int contact_count = b2Body_GetContactCapacity(env->roomba_body_id);
+    b2ContactData* contacts = malloc(contact_count * sizeof(b2ContactData));
+    int actual_count = b2Body_GetContactData(env->roomba_body_id, contacts, contact_count);
+
+    for (int i = 0; i < actual_count; i++) {
+        if (contacts[i].manifold.pointCount > 0) {
+            wall_collision = 1;
+            break;
+        }
     }
-    
+    free(contacts);
+
+    // Reward forward movement only
+    b2Vec2 actual_velocity = b2Body_GetLinearVelocity(env->roomba_body_id);
+    float forward_velocity = actual_velocity.x * cosf(current_angle) + actual_velocity.y * sinf(current_angle);
+
+    env->rewards[0] = 0.0f;
+    if (forward_velocity >= -1.0f) {
+      env->rewards[0] += fabsf(forward_velocity) / 50.0f * 0.5f;
+    }
+    // if (wall_collision) {
+    //   env->rewards[0] -= 0.05f;
+    // }
+
+    // Accumulate reward into episode return
+    env->episode_return += env->rewards[0];
+
+    // Update observations: [left_bumper_importance, right_bumper_importance]
+    env->observations[0] = env->left_bumper_importance;
+    env->observations[1] = env->right_bumper_importance;
+
     // Check for episode termination
     if (env->tick >= env->max_steps) {
         env->terminals[0] = 1;
@@ -221,74 +231,103 @@ void c_step(Roomba* env) {
 }
 
 void c_render(Roomba* env) {
-    const int WINDOW_WIDTH = 800;
-    const int WINDOW_HEIGHT = 600;
-    const float SCALE = 80.0f;  // Pixels per unit
-    
+    const float SCALE = 2.0f;  // Pixels per cm - reasonable room size on screen
+    float room_pixel_width = env->room_width * SCALE;
+    float room_pixel_height = env->room_height * SCALE;
+
+    int WINDOW_WIDTH = fmaxf(800, room_pixel_width);
+    int WINDOW_HEIGHT = fmaxf(600, room_pixel_height);
+
     if (!IsWindowReady()) {
         InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "PufferLib Roomba");
-        SetTargetFPS(30);
+        SetTargetFPS(1 / dt);
     }
-    
+
     if (IsKeyDown(KEY_ESCAPE)) {
         exit(0);
     }
-    
+
     BeginDrawing();
     ClearBackground((Color){6, 24, 24, 255});
-    
+
     // Draw room boundaries
-    float room_pixel_width = env->room_width * SCALE;
-    float room_pixel_height = env->room_height * SCALE;
     float offset_x = (WINDOW_WIDTH - room_pixel_width) / 2.0f;
     float offset_y = (WINDOW_HEIGHT - room_pixel_height) / 2.0f;
-    
+
+    // Draw room boundaries with thick lines for visibility
     DrawRectangleLines(offset_x, offset_y, room_pixel_width, room_pixel_height, (Color){241, 241, 241, 255});
-    
-    // Draw roomba
-    float roomba_x = offset_x + env->x * SCALE;
-    float roomba_y = offset_y + env->y * SCALE;
+    DrawRectangleLines(offset_x-1, offset_y-1, room_pixel_width+2, room_pixel_height+2, (Color){241, 241, 241, 255});
+    DrawRectangleLines(offset_x+1, offset_y+1, room_pixel_width-2, room_pixel_height-2, (Color){241, 241, 241, 255});
+
+    // Get roomba position and orientation from Box2D
+    b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
+    float roomba_x = offset_x + transform.p.x * SCALE;
+    float roomba_y = offset_y + transform.p.y * SCALE;
+    float roomba_angle = b2Rot_GetAngle(transform.q);
     float roomba_radius = ROOMBA_RADIUS * SCALE;
-    
-    Color roomba_color = env->bump_sensor ? (Color){187, 0, 0, 255} : (Color){0, 187, 187, 255};
+
+    Color roomba_color = (env->left_bumper || env->right_bumper) ? (Color){187, 0, 0, 255} : (Color){0, 187, 187, 255};
     DrawCircle(roomba_x, roomba_y, roomba_radius, roomba_color);
-    
+
+    // Draw brush collection area
+    float brush_center_x = offset_x + (transform.p.x - (BRUSH_DEPTH / 2.0f) * cosf(roomba_angle)) * SCALE;
+    float brush_center_y = offset_y + (transform.p.y - (BRUSH_DEPTH / 2.0f) * sinf(roomba_angle)) * SCALE;
+
+    float brush_width = BRUSH_WIDTH * SCALE;
+    float brush_depth = BRUSH_DEPTH * SCALE;
+
+    // Calculate brush rectangle corners
+    float cos_theta = cosf(roomba_angle);
+    float sin_theta = sinf(roomba_angle);
+    float half_width = brush_width / 2.0f;
+    float half_depth = brush_depth / 2.0f;
+
+    Vector2 corners[4] = {
+        {brush_center_x + (-half_depth * cos_theta - (-half_width) * sin_theta),
+         brush_center_y + (-half_depth * sin_theta + (-half_width) * cos_theta)},
+        {brush_center_x + (half_depth * cos_theta - (-half_width) * sin_theta),
+         brush_center_y + (half_depth * sin_theta + (-half_width) * cos_theta)},
+        {brush_center_x + (half_depth * cos_theta - half_width * sin_theta),
+         brush_center_y + (half_depth * sin_theta + half_width * cos_theta)},
+        {brush_center_x + (-half_depth * cos_theta - half_width * sin_theta),
+         brush_center_y + (-half_depth * sin_theta + half_width * cos_theta)}
+    };
+
+    // Draw brush area outline
+    for (int i = 0; i < 4; i++) {
+        DrawLineEx(corners[i], corners[(i+1)%4], 2.0f, (Color){255, 255, 0, 128}); // Semi-transparent yellow
+    }
+
     // Draw orientation indicator
     float indicator_length = roomba_radius * 0.8f;
-    float end_x = roomba_x + indicator_length * cosf(env->theta);
-    float end_y = roomba_y + indicator_length * sinf(env->theta);
-    DrawLine(roomba_x, roomba_y, end_x, end_y, (Color){255, 255, 255, 255});
-    
-    // Draw dirt grid
-    float grid_scale = SCALE / 2.0f;  // Grid cells are 0.5 units
-    for (int gy = 0; gy < env->grid_height; gy++) {
-        for (int gx = 0; gx < env->grid_width; gx++) {
-            int grid_idx = gy * env->grid_width + gx;
-            if (env->coverage_grid[grid_idx] == 0) {  // Dirty tile
-                float dirt_x = offset_x + gx * grid_scale;
-                float dirt_y = offset_y + gy * grid_scale;
-                DrawRectangle(dirt_x, dirt_y, grid_scale, grid_scale, (Color){100, 50, 0, 100});
-            }
-        }
-    }
-    
+    float end_x = roomba_x + indicator_length * cosf(roomba_angle);
+    float end_y = roomba_y + indicator_length * sinf(roomba_angle);
+    DrawLineEx(
+        (Vector2){roomba_x, roomba_y},
+        (Vector2){end_x, end_y},
+        6.0f,
+        (Color){255, 255, 255, 255}
+    );
+
     // Draw sensor information
-    float coverage_pct = (env->total_dirt > 0) ? 
-        (float)env->cleaned_dirt / (float)env->total_dirt * 100.0f : 0.0f;
-    char sensor_text[200];
-    snprintf(sensor_text, sizeof(sensor_text), 
-        "Bump: %d | Pos: (%.1f,%.1f) | θ: %.1f° | Speed: %.2f | Coverage: %.1f%%",
-        env->bump_sensor, env->x, env->y, env->theta * 180.0f / 3.14159265359f, env->speed, coverage_pct);
+    char sensor_text[300];
+    snprintf(sensor_text, sizeof(sensor_text),
+        "%.2f/%.2f | (%.0f,%.0f) facing %.1f° | %.0f/s, %.0f/s | bump %d%d",
+        env->rewards[0], env->episode_return,
+        transform.p.x, transform.p.y, roomba_angle * 180.0f / PI,
+        env->left_wheel_speed, env->right_wheel_speed,
+        env->left_bumper, env->right_bumper);
     DrawText(sensor_text, 10, 10, 20, (Color){241, 241, 241, 255});
-    
+
     EndDrawing();
 }
 
 void c_close(Roomba* env) {
-    if (env->coverage_grid) {
-        free(env->coverage_grid);
-        env->coverage_grid = NULL;
+    if (b2World_IsValid(env->world_id)) {
+        b2DestroyWorld(env->world_id);
+        env->world_id = b2_nullWorldId;
     }
+
     if (IsWindowReady()) {
         CloseWindow();
     }
