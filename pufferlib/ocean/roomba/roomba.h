@@ -136,9 +136,9 @@ void c_step(Roomba* env) {
     env->left_bumper_importance = fmaxf(0.0f, env->left_bumper_importance - dt);
     env->right_bumper_importance = fmaxf(0.0f, env->right_bumper_importance - dt);
 
-    // Get wheel speed commands from actions (clamped to [-50, 50] cm/s)
-    float target_left = fmaxf(-MAX_WHEEL_SPEED, fminf(MAX_WHEEL_SPEED, env->actions[0]));
-    float target_right = fmaxf(-MAX_WHEEL_SPEED, fminf(MAX_WHEEL_SPEED, env->actions[1]));
+    // Scale normalized actions [-1, 1] to wheel speeds [-50, 50] cm/s
+    float target_left = env->actions[0] * MAX_WHEEL_SPEED;
+    float target_right = env->actions[1] * MAX_WHEEL_SPEED;
 
     // Apply wheel speed commands with friction
     env->left_wheel_speed = env->left_wheel_speed * FRICTION + target_left * (1.0f - FRICTION);
@@ -211,9 +211,9 @@ void c_step(Roomba* env) {
     if (forward_velocity >= -1.0f) {
       env->rewards[0] += fabsf(forward_velocity) / 50.0f * 0.5f;
     }
-    // if (wall_collision) {
-    //   env->rewards[0] -= 0.05f;
-    // }
+    if (wall_collision) {
+      env->rewards[0] -= 0.1f;
+    }
 
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];

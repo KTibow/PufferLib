@@ -16,9 +16,10 @@ class Roomba(pufferlib.PufferEnv):
             high=np.array([2.0, 2.0]), 
             shape=(2,), dtype=np.float32)
         
-        # Action space: [left_wheel_speed, right_wheel_speed] in cm/s, capped at ±50
+        # Action space: [left_wheel_speed, right_wheel_speed] normalized to [-1, 1]
+        # Will be scaled to ±50 cm/s in the C environment
         self.single_action_space = gymnasium.spaces.Box(
-            low=-50.0, high=50.0, shape=(2,), dtype=np.float32)
+            low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         
         self.render_mode = render_mode
         self.num_agents = num_envs
@@ -64,9 +65,9 @@ if __name__ == '__main__':
     env.reset()
     steps = 0
 
-    # Cache some random actions for testing (wheel speeds)
+    # Cache some random actions for testing (normalized [-1, 1])
     CACHE = 1024
-    actions = np.random.uniform(-50, 50, (CACHE, N, 2))
+    actions = np.random.uniform(-1, 1, (CACHE, N, 2))
 
     import time
     start = time.time()
