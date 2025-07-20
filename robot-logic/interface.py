@@ -3,6 +3,8 @@ Opcodes for the iRobot Create 2.
 """
 
 PACKETS = {
+    7: ('>B', 1),
+    15: ('>B', 1),
     43: ('>h', 2),
     44: ('>h', 2),
     45: ('>B', 1),

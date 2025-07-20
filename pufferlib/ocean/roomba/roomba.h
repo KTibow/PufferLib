@@ -5,6 +5,8 @@
 #include "raylib.h"
 #include "box2d/box2d.h"
 
+#define MAX_DIRT_PIECES 20
+
 const float ROOMBA_RADIUS = 17.425f; // cm
 const float MAX_WHEEL_SPEED = 50.0f; // cm/s
 const float WHEELBASE = 23.5f; // cm
@@ -12,6 +14,7 @@ const float FRICTION = 0.01f;
 const float BUMP_CLEARANCE = 1.0f; // cm - distance to back away before bumper clears
 const float BRUSH_WIDTH = 16.51f; // cm - 6.5" brush width
 const float BRUSH_DEPTH = 7.62f; // cm - 3" brush depth
+const float DIRT_DISPLAY_RADIUS = 2.5f; // cm - visual radius for dirt
 const float dt = 0.05f;
 
 typedef struct {
@@ -21,6 +24,11 @@ typedef struct {
     float dirt_collected;
     float n; // Required as the last field
 } Log;
+
+typedef struct {
+    float x, y;
+    int active; // 1 if dirt exists, 0 if collected
+} Dirt;
 
 typedef struct {
     Log log;                     // Required field
@@ -49,12 +57,67 @@ typedef struct {
     int right_bumper;            // 1 if right bumper pressed, 0 otherwise
     float left_bumper_importance;     // Importance of left bumper hit: 2.0=just hit, 0.0=not hit recently
     float right_bumper_importance;    // Importance of right bumper hit: 2.0=just hit, 0.0=not hit recently
+
+    // Dirt system
+    Dirt dirt_pieces[MAX_DIRT_PIECES];
+    int dirt_collected_this_episode;
 } Roomba;
+
+void spawn_dirt(Roomba* env) {
+    for (int i = 0; i < MAX_DIRT_PIECES; i++) {
+        env->dirt_pieces[i].x = (float)(rand()) / RAND_MAX * (env->room_width - 2 * ROOMBA_RADIUS) + ROOMBA_RADIUS;
+        env->dirt_pieces[i].y = (float)(rand()) / RAND_MAX * (env->room_height - 2 * ROOMBA_RADIUS) + ROOMBA_RADIUS;
+        env->dirt_pieces[i].active = 1;
+    }
+}
+
+int check_dirt_collection(Roomba* env) {
+    int collected = 0;
+
+    // Get current roomba position and orientation from Box2D
+    b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
+    float roomba_x = transform.p.x;
+    float roomba_y = transform.p.y;
+    float roomba_theta = b2Rot_GetAngle(transform.q);
+
+    // Calculate brush rectangle corners relative to roomba center
+    float brush_center_x = roomba_x - (BRUSH_DEPTH / 2.0f) * cosf(roomba_theta);
+    float brush_center_y = roomba_y - (BRUSH_DEPTH / 2.0f) * sinf(roomba_theta);
+
+    // Brush rectangle corners (local coordinates)
+    float half_width = BRUSH_WIDTH / 2.0f;
+    float half_depth = BRUSH_DEPTH / 2.0f;
+
+    for (int i = 0; i < MAX_DIRT_PIECES; i++) {
+        if (!env->dirt_pieces[i].active) continue;
+
+        // Transform dirt position to brush-relative coordinates
+        float dx = env->dirt_pieces[i].x - brush_center_x;
+        float dy = env->dirt_pieces[i].y - brush_center_y;
+
+        // Rotate to brush coordinate system
+        float cos_theta = cosf(-roomba_theta);
+        float sin_theta = sinf(-roomba_theta);
+        float local_x = dx * cos_theta - dy * sin_theta;
+        float local_y = dx * sin_theta + dy * cos_theta;
+
+        // Check if point is inside brush rectangle
+        if (local_x >= -half_depth && local_x <= half_depth &&
+            local_y >= -half_width && local_y <= half_width) {
+            env->dirt_pieces[i].active = 0;
+            collected++;
+            env->dirt_collected_this_episode++;
+        }
+    }
+
+    return collected;
+}
 
 void add_log(Roomba* env) {
     env->log.collisions += (env->left_bumper || env->right_bumper) ? 1 : 0;
     env->log.episode_length += env->tick;
     env->log.episode_return += env->episode_return;
+    env->log.dirt_collected += env->dirt_collected_this_episode;
     env->log.n++;
 }
 
@@ -119,6 +182,10 @@ void c_reset(Roomba* env) {
     env->right_bumper = 0;
     env->left_bumper_importance = 0.0f;
     env->right_bumper_importance = 0.0f;
+    env->dirt_collected_this_episode = 0;
+
+    // Spawn new dirt pieces
+    spawn_dirt(env);
 
     // Set initial observations: [left_bumper_importance, right_bumper_importance]
     env->observations[0] = env->left_bumper_importance;
@@ -212,8 +279,12 @@ void c_step(Roomba* env) {
       env->rewards[0] += fabsf(forward_velocity) / 50.0f * 0.5f;
     }
     if (wall_collision) {
-      env->rewards[0] -= 0.1f;
+      env->rewards[0] -= 0.5f;
     }
+
+    // Check for dirt collection and add rewards
+    int dirt_collected = check_dirt_collection(env);
+    env->rewards[0] += dirt_collected * 0.5f;
 
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];
@@ -269,6 +340,15 @@ void c_render(Roomba* env) {
     Color roomba_color = (env->left_bumper || env->right_bumper) ? (Color){187, 0, 0, 255} : (Color){0, 187, 187, 255};
     DrawCircle(roomba_x, roomba_y, roomba_radius, roomba_color);
 
+    // Draw dirt pieces
+    for (int i = 0; i < MAX_DIRT_PIECES; i++) {
+        if (env->dirt_pieces[i].active) {
+            float dirt_x = offset_x + env->dirt_pieces[i].x * SCALE;
+            float dirt_y = offset_y + env->dirt_pieces[i].y * SCALE;
+            DrawCircle(dirt_x, dirt_y, DIRT_DISPLAY_RADIUS * SCALE, (Color){139, 69, 19, 255}); // Brown dirt
+        }
+    }
+
     // Draw brush collection area
     float brush_center_x = offset_x + (transform.p.x - (BRUSH_DEPTH / 2.0f) * cosf(roomba_angle)) * SCALE;
     float brush_center_y = offset_y + (transform.p.y - (BRUSH_DEPTH / 2.0f) * sinf(roomba_angle)) * SCALE;
@@ -312,11 +392,12 @@ void c_render(Roomba* env) {
     // Draw sensor information
     char sensor_text[300];
     snprintf(sensor_text, sizeof(sensor_text),
-        "%.2f/%.2f | (%.0f,%.0f) facing %.1f° | %.0f/s, %.0f/s | bump %d%d",
+        "%.2f/%.2f | (%.0f,%.0f) facing %.1f° | %.0f/s, %.0f/s | bump %d%d | Dirt: %d/%d",
         env->rewards[0], env->episode_return,
         transform.p.x, transform.p.y, roomba_angle * 180.0f / PI,
         env->left_wheel_speed, env->right_wheel_speed,
-        env->left_bumper, env->right_bumper);
+        env->left_bumper, env->right_bumper,
+        env->dirt_collected_this_episode, MAX_DIRT_PIECES);
     DrawText(sensor_text, 10, 10, 20, (Color){241, 241, 241, 255});
 
     EndDrawing();
