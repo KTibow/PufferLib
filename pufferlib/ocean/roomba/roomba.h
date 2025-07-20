@@ -32,7 +32,7 @@ typedef struct {
 
 typedef struct {
     Log log;                     // Required field
-    float* observations;         // Required field. 2D: [left_bumper_importance, right_bumper_importance]
+    float* observations;         // Required field. 3D: [left_bumper_importance, right_bumper_importance, minutes_since_start]
     float* actions;              // Required field. 2D: [left_wheel_speed, right_wheel_speed] in cm/s
     float* rewards;              // Required field
     unsigned char* terminals;    // Required field
@@ -187,9 +187,10 @@ void c_reset(Roomba* env) {
     // Spawn new dirt pieces
     spawn_dirt(env);
 
-    // Set initial observations: [left_bumper_importance, right_bumper_importance]
+    // Set initial observations: [left_bumper_importance, right_bumper_importance, minutes_since_start]
     env->observations[0] = env->left_bumper_importance;
     env->observations[1] = env->right_bumper_importance;
+    env->observations[2] = env->tick * dt / 60.0f;
 }
 
 void c_step(Roomba* env) {
@@ -276,7 +277,7 @@ void c_step(Roomba* env) {
 
     env->rewards[0] = 0.0f;
     if (forward_velocity >= -1.0f) {
-      env->rewards[0] += fabsf(forward_velocity) / 50.0f * 0.5f;
+      env->rewards[0] += fabsf(forward_velocity) / 50.0f * 0.05f;
     }
     if (wall_collision) {
       env->rewards[0] -= 0.5f;
@@ -289,9 +290,10 @@ void c_step(Roomba* env) {
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];
 
-    // Update observations: [left_bumper_importance, right_bumper_importance]
+    // Update observations: [left_bumper_importance, right_bumper_importance, minutes_since_start]
     env->observations[0] = env->left_bumper_importance;
     env->observations[1] = env->right_bumper_importance;
+    env->observations[2] = env->tick * dt / 60.0f;
 
     // Check for episode termination
     if (env->tick >= env->max_steps) {

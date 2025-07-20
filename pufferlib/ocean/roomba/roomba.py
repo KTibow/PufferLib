@@ -6,21 +6,23 @@ import numpy as np
 import pufferlib
 from pufferlib.ocean.roomba import binding
 
+dt = 0.05
 class Roomba(pufferlib.PufferEnv):
-    def __init__(self, num_envs=1, render_mode=None, log_interval=128, 
+    def __init__(self, num_envs=1, render_mode=None, log_interval=128,
                  room_width=800.0, room_height=600.0, max_steps=1000, buf=None, seed=0):
-        # Observation space: [left_bumper_importance, right_bumper_importance]
+        # Observation space: [left_bumper_importance, right_bumper_importance, minutes_since_start]
         # Bumper importance: 2.0=just hit, 0.0=not hit recently (decays over 2 seconds)
+        # Minutes since start: 0.0 to max_steps*dt/60 (episode time in minutes)
         self.single_observation_space = gymnasium.spaces.Box(
-            low=np.array([0.0, 0.0]), 
-            high=np.array([2.0, 2.0]), 
-            shape=(2,), dtype=np.float32)
-        
+            low=np.array([0.0, 0.0, 0.0]),
+            high=np.array([2.0, 2.0, max_steps*dt/60.0]),
+            shape=(3,), dtype=np.float32)
+
         # Action space: [left_wheel_speed, right_wheel_speed] normalized to [-1, 1]
         # Will be scaled to ±50 cm/s in the C environment
         self.single_action_space = gymnasium.spaces.Box(
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
-        
+
         self.render_mode = render_mode
         self.num_agents = num_envs
         self.log_interval = log_interval
@@ -31,9 +33,9 @@ class Roomba(pufferlib.PufferEnv):
         super().__init__(buf)
         self.c_envs = binding.vec_init(
             self.observations, self.actions, self.rewards,
-            self.terminals, self.truncations, num_envs, seed, 
+            self.terminals, self.truncations, num_envs, seed,
             room_width=room_width, room_height=room_height, max_steps=max_steps)
- 
+
     def reset(self, seed=0):
         binding.vec_reset(self.c_envs, seed)
         self.tick = 0
