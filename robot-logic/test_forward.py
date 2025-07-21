@@ -9,10 +9,12 @@ roomba.write(OPCODE_SAFE)
 time.sleep(0.2)
 
 def drive(left, right):
-  roomba.write(OPCODE_DRIVE_DIRECT + left.to_bytes(2, "big", signed=True) + right.to_bytes(2, "big", signed=True))
+  roomba.write(OPCODE_DRIVE_DIRECT + right.to_bytes(2, "big", signed=True) + left.to_bytes(2, "big", signed=True))
 
-drive(100, 100)
-time.sleep(20)
+for i in range(10, 15):
+  print(i)
+  drive(i, 20)
+  time.sleep(1)
 
 drive(0, 0)
 time.sleep(0.2)

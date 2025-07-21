@@ -18,7 +18,7 @@ actual_dt = dt / speed_factor
 class RoombaNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Linear(4, 128), nn.GELU())  # 4 inputs: left bumper importance, right bumper importance, left light bumper, right light bumper
+        self.encoder = nn.Sequential(nn.Linear(4, 128), nn.GELU())  # 4 inputs: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
         self.decoder_mean = nn.Linear(128, 2)  # 128 hidden -> 2 wheel speeds
         self.decoder_logstd = nn.Parameter(torch.zeros(1, 2))
         self.value = nn.Linear(128, 1)  # Value function (not used for inference)
@@ -35,8 +35,16 @@ def drive(roomba, left_speed, right_speed):
     cmd = OPCODE_DRIVE_DIRECT + right.to_bytes(2, "big", signed=True) + left.to_bytes(2, "big", signed=True)
     roomba.write(cmd)
 
+def calculate_light_bumper_strength(raw_value):
+    """Scale raw sensor value (0-4095) to light bumper strength.
+    Scale 0-1000 range to 0-0.5 and clamp at 0.5 max.
+    """
+    return min(0.5, raw_value / 1000.0 * 0.5)
+
 def read_sensors(roomba):
-    """Read bumper sensors (packet 7) and analog light bumper sensors (packets 46-51)"""
+    """Read bumper sensors (packet 7) and analog light bumper sensors (packets 46-51)
+    Returns unified bumper values matching simulation format.
+    """
     roomba.read_all()
     # Request bumper (7) and all 6 analog light bumper sensors (46-51)
     roomba.write(OPCODE_SEND_SENSORS + bytes([7, 7, 46, 47, 48, 49, 50, 51]))
@@ -46,7 +54,7 @@ def read_sensors(roomba):
     expected_length = 1 + 6 * 2  # 1 + 12 = 13 bytes total
     data = roomba.read(expected_length)
     if len(data) != expected_length:
-        return False, False, 0.0, 0.0  # Default values if read fails
+        return 0.0, 0.0  # Default unified bumper values if read fails
 
     # Parse bumper data (first byte)
     bumper_byte = data[0]
@@ -55,29 +63,32 @@ def read_sensors(roomba):
 
     # Parse analog light bumper data (remaining 12 bytes, 2 bytes per sensor)
     # Sensors: Left (46), Front Left (47), Center Left (48), Center Right (49), Front Right (50), Right (51)
-    light_sensors = []
+    light_strengths = []
     for i in range(6):
         byte_offset = 1 + i * 2  # Start after bumper byte, 2 bytes per sensor
         high_byte = data[byte_offset]
         low_byte = data[byte_offset + 1]
         raw_value = (high_byte << 8) | low_byte  # Combine to 12-bit value (0-4095)
-        # Scale 0-1000 range to 0-1 with clamping as requested
-        scaled_value = min(1.0, max(0.0, raw_value / 1000.0))
-        light_sensors.append(scaled_value)
+        strength = calculate_light_bumper_strength(raw_value)
+        light_strengths.append(strength)
 
     # Aggregate sensors into left/right groups (matching simulation logic)
     # Left group: sensors 0, 1, 2 (Left, Front Left, Center Left)
     # Right group: sensors 3, 4, 5 (Center Right, Front Right, Right)
-    left_light_bumper = max(light_sensors[0], light_sensors[1], light_sensors[2])
-    right_light_bumper = max(light_sensors[3], light_sensors[4], light_sensors[5])
+    left_light_strength = max(light_strengths[0], light_strengths[1], light_strengths[2])
+    right_light_strength = max(light_strengths[3], light_strengths[4], light_strengths[5])
 
-    return left_bump, right_bump, left_light_bumper, right_light_bumper
+    # Create unified bumper values: physical bumper forces to 1.0, otherwise use light bumper strength
+    left_unified = 1.0 if left_bump else left_light_strength
+    right_unified = 1.0 if right_bump else right_light_strength
+
+    return left_unified, right_unified
 
 def main():
     # Load trained model
     print("Loading model...")
     net = RoombaNet()
-    state_dict = torch.load("puffer_roomba_EX-125.pt", map_location="cpu")
+    state_dict = torch.load("puffer_roomba_EX-139.pt", map_location="cpu")
     net.load_state_dict(state_dict)
     net.eval()
 
@@ -94,32 +105,29 @@ def main():
     print("Running neural network control... Press Ctrl+C to stop")
     # roomba.write(OPCODE_MOTORS + bytes([0b00000110]))
 
-    # Initialize bumper importance values and light bumpers
-    left_bumper_importance = 0.0
-    right_bumper_importance = 0.0
-    left_light_bumper = 0.0  # Analog left light bumper strength from actual sensors (0-1)
-    right_light_bumper = 0.0  # Analog right light bumper strength from actual sensors (0-1)
+    # Initialize unified bumper values and memory (matching simulation format)
+    left_bumper = 0.0  # Current unified bumper value (1.0 for physical bump, 0.0-0.5 for light bumper)
+    right_bumper = 0.0  # Current unified bumper value
+    left_bumper_memory = 0.0  # Decaying memory of left bumper hits
+    right_bumper_memory = 0.0  # Decaying memory of right bumper hits
 
     try:
         step = 0
         while True:
             start_time = time.time()
-            # Read all sensors
-            left_bump, right_bump, left_light_bumper, right_light_bumper = read_sensors(roomba)
+            # Read unified bumper sensors (combines physical bumper + light bumper)
+            left_bumper, right_bumper = read_sensors(roomba)
 
-            # Update bumper importance values
-            if left_bump:
-                left_bumper_importance = 2.0
-            else:
-                left_bumper_importance = max(0.0, left_bumper_importance - 0.05)
+            # Update memory with unified logic: take maximum of current unified bumper value or existing memory
+            left_bumper_memory = max(left_bumper_memory, left_bumper)
+            right_bumper_memory = max(right_bumper_memory, right_bumper)
 
-            if right_bump:
-                right_bumper_importance = 2.0
-            else:
-                right_bumper_importance = max(0.0, right_bumper_importance - 0.05)
+            # Decay memory values by subtracting timestep/3 for 3 second decay (minimum 0.0)
+            left_bumper_memory = max(0.0, left_bumper_memory - dt/3)
+            right_bumper_memory = max(0.0, right_bumper_memory - dt/3)
 
-            # Create observation array with 4 values
-            obs = np.array([left_bumper_importance, right_bumper_importance, left_light_bumper, right_light_bumper], dtype=np.float32)
+            # Create observation array matching simulation format: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
+            obs = np.array([left_bumper, right_bumper, left_bumper_memory, right_bumper_memory], dtype=np.float32)
 
             # Run neural network
             with torch.no_grad():
@@ -139,7 +147,7 @@ def main():
 
             processing_time = time.time() - start_time
             # Calculate actual timestep duration (extended by 1/speed_factor to maintain distance)
-            print(f"Step {step:03d} ({processing_time:.3f}s): bumps {left_bumper_importance:.2f},{right_bumper_importance:.2f} light {left_light_bumper:.3f},{right_light_bumper:.3f} ({int(left_bump)},{int(right_bump)}) -> actions={actions} speeds=({left_speed:.0f}, {right_speed:.0f}) mm/s [factor={speed_factor}]")
+            print(f"Step {step:03d} ({processing_time:.3f}s): unified_bumpers {left_bumper:.3f},{right_bumper:.3f} memory {left_bumper_memory:.3f},{right_bumper_memory:.3f} -> actions={actions} speeds=({left_speed:.0f}, {right_speed:.0f}) mm/s [factor={speed_factor}]")
             if processing_time < actual_dt:
                 time.sleep(actual_dt - processing_time)
             step += 1
