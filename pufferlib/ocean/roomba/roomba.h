@@ -9,6 +9,7 @@
 #define MAX_HISTORY_POINTS 1000
 
 const float ROOMBA_RADIUS = 17.425f; // cm
+const float LIGHT_BUMPER_RADIUS = 22.425f; // cm - 5cm larger than roomba radius
 const float MAX_WHEEL_SPEED = 25.0f; // cm/s
 const float WHEELBASE = 23.5f; // cm
 const float FRICTION = 0.01f;
@@ -37,7 +38,7 @@ typedef struct {
 
 typedef struct {
     Log log;                     // Required field
-    float* observations;         // Required field. 2D: [left_bumper_importance, right_bumper_importance]
+    float* observations;         // Required field. 3D: [left_bumper_importance, right_bumper_importance, light_bumper]
     float* actions;              // Required field. 2D: [left_wheel_speed, right_wheel_speed] in cm/s
     float* rewards;              // Required field
     unsigned char* terminals;    // Required field
@@ -62,6 +63,9 @@ typedef struct {
     int right_bumper;            // 1 if right bumper pressed, 0 otherwise
     float left_bumper_importance;     // Importance of left bumper hit: 2.0=just hit, 0.0=not hit recently
     float right_bumper_importance;    // Importance of right bumper hit: 2.0=just hit, 0.0=not hit recently
+
+    // Light bumper sensor (binary, 1 if wall detected within LIGHT_BUMPER_RADIUS, 0 otherwise)
+    int light_bumper;
 
     // Dirt system
     Dirt dirt_pieces[MAX_DIRT_PIECES];
@@ -192,6 +196,7 @@ void c_reset(Roomba* env) {
     env->right_bumper = 0;
     env->left_bumper_importance = 0.0f;
     env->right_bumper_importance = 0.0f;
+    env->light_bumper = 0;
     env->dirt_collected_this_episode = 0;
 
     // Reset history tracking
@@ -201,15 +206,17 @@ void c_reset(Roomba* env) {
     // Spawn new dirt pieces
     spawn_dirt(env);
 
-    // Set initial observations: [left_bumper_importance, right_bumper_importance]
+    // Set initial observations: [left_bumper_importance, right_bumper_importance, light_bumper]
     env->observations[0] = env->left_bumper_importance;
     env->observations[1] = env->right_bumper_importance;
+    env->observations[2] = (float)env->light_bumper;
 }
 
 void c_step(Roomba* env) {
     env->tick += 1;
     env->left_bumper = 0;
     env->right_bumper = 0;
+    env->light_bumper = 0;
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0;
 
@@ -295,6 +302,20 @@ void c_step(Roomba* env) {
     }
     free(contacts);
 
+    // Light bumper detection: Check for walls within LIGHT_BUMPER_RADIUS in all directions
+    // Sample 16 points around the full 360-degree circle
+    for (int sample = 0; sample < 16; sample++) {
+        float angle = 2 * PI * sample / 16.0f;
+        float sample_x = pos.x + LIGHT_BUMPER_RADIUS * cosf(angle);
+        float sample_y = pos.y + LIGHT_BUMPER_RADIUS * sinf(angle);
+
+        if (sample_x <= 0 || sample_x >= env->room_width ||
+            sample_y <= 0 || sample_y >= env->room_height) {
+            env->light_bumper = 1;
+            break;
+        }
+    }
+
     // Reward forward movement only
     b2Vec2 actual_velocity = b2Body_GetLinearVelocity(env->roomba_body_id);
     float forward_velocity = actual_velocity.x * cosf(current_angle) + actual_velocity.y * sinf(current_angle);
@@ -314,9 +335,10 @@ void c_step(Roomba* env) {
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];
 
-    // Update observations: [left_bumper_importance, right_bumper_importance]
+    // Update observations: [left_bumper_importance, right_bumper_importance, light_bumper]
     env->observations[0] = env->left_bumper_importance;
     env->observations[1] = env->right_bumper_importance;
+    env->observations[2] = (float)env->light_bumper;
 
     // Check for episode termination
     if (env->tick >= env->max_steps) {
@@ -437,11 +459,11 @@ void c_render(Roomba* env) {
     // Draw sensor information
     char sensor_text[300];
     snprintf(sensor_text, sizeof(sensor_text),
-        "%.2f/%.2f | (%.0f,%.0f) facing %.1f° | %.0f/s, %.0f/s | bump %d%d | Dirt: %d/%d",
+        "%.2f/%.2f | (%.0f,%.0f) facing %.1f° | %.0f/s, %.0f/s | bump %d:%d%d | Dirt: %d/%d",
         env->rewards[0], env->episode_return,
         transform.p.x, transform.p.y, roomba_angle * 180.0f / PI,
         env->left_wheel_speed, env->right_wheel_speed,
-        env->left_bumper, env->right_bumper,
+        env->light_bumper, env->left_bumper, env->right_bumper,
         env->dirt_collected_this_episode, MAX_DIRT_PIECES);
     DrawText(sensor_text, 10, 10, 20, (Color){241, 241, 241, 255});
 

@@ -10,12 +10,13 @@ dt = 0.05
 class Roomba(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128,
                  room_width=800.0, room_height=600.0, max_steps=1000, buf=None, seed=0):
-        # Observation space: [left_bumper_importance, right_bumper_importance]
+        # Observation space: [left_bumper_importance, right_bumper_importance, light_bumper]
         # Bumper importance: 2.0=just hit, 0.0=not hit recently (decays over 2 seconds)
+        # Light bumper: 1.0=wall detected within 5cm extended radius, 0.0=no wall detected (binary)
         self.single_observation_space = gymnasium.spaces.Box(
-            low=np.array([0.0, 0.0]),
-            high=np.array([2.0, 2.0]),
-            shape=(2,), dtype=np.float32)
+            low=np.array([0.0, 0.0, 0.0]),
+            high=np.array([2.0, 2.0, 1.0]),
+            shape=(3,), dtype=np.float32)
 
         # Action space: [left_wheel_speed, right_wheel_speed] normalized to [-1, 1]
         # Will be scaled in the C environment
