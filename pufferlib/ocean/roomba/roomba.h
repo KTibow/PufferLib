@@ -39,7 +39,7 @@ typedef struct {
 
 typedef struct {
     Log log;                     // Required field
-    float* observations;         // Required field. 4D: [left_bumper_importance, right_bumper_importance, left_light_bumper_strength, right_light_bumper_strength]
+    float* observations;         // Required field. 8D: [left_bump_raw, right_bump_raw, left_light_raw, right_light_raw, left_bump_mem, right_bump_mem, left_light_mem, right_light_mem]
     float* actions;              // Required field. 2D: [left_wheel_speed, right_wheel_speed] in cm/s
     float* rewards;              // Required field
     unsigned char* terminals;    // Required field
@@ -62,8 +62,8 @@ typedef struct {
     // Sensors
     int left_bumper;             // 1 if left bumper pressed, 0 otherwise
     int right_bumper;            // 1 if right bumper pressed, 0 otherwise
-    float left_bumper_importance;     // Importance of left bumper hit: 2.0=just hit, 0.0=not hit recently
-    float right_bumper_importance;    // Importance of right bumper hit: 2.0=just hit, 0.0=not hit recently
+    float left_bumper_memory;    // Decaying memory of left bumper hits: max(current, previous-dt)
+    float right_bumper_memory;   // Decaying memory of right bumper hits: max(current, previous-dt)
 
     // Light bumper sensors (6 discrete sensors at specific angles)
     // Angles relative to front of robot: Left (-39.6°), Front Left (-18°), Center Left (-6°),
@@ -73,6 +73,8 @@ typedef struct {
     // Aggregated light bumper sensors for observations
     float left_light_bumper_strength;   // Strength from 0.0-1.0 based on piecewise function
     float right_light_bumper_strength;  // Strength from 0.0-1.0 based on piecewise function
+    float left_light_memory;            // Decaying memory of left light bumper: max(current, previous-dt)
+    float right_light_memory;           // Decaying memory of right light bumper: max(current, previous-dt)
 
     // Dirt system
     Dirt dirt_pieces[MAX_DIRT_PIECES];
@@ -216,13 +218,15 @@ void c_reset(Roomba* env) {
     env->episode_return = 0.0f;
     env->left_bumper = 0;
     env->right_bumper = 0;
-    env->left_bumper_importance = 0.0f;
-    env->right_bumper_importance = 0.0f;
+    env->left_bumper_memory = 0.0f;
+    env->right_bumper_memory = 0.0f;
     for (int i = 0; i < 6; i++) {
         env->light_bumper_distances[i] = 100.0f;  // Initialize to large distance
     }
     env->left_light_bumper_strength = 0.0f;
     env->right_light_bumper_strength = 0.0f;
+    env->left_light_memory = 0.0f;
+    env->right_light_memory = 0.0f;
     env->dirt_collected_this_episode = 0;
 
     // Reset history tracking
@@ -232,11 +236,15 @@ void c_reset(Roomba* env) {
     // Spawn new dirt pieces
     spawn_dirt(env);
 
-    // Set initial observations: [left_bumper_importance, right_bumper_importance, left_light_bumper_strength, right_light_bumper_strength]
-    env->observations[0] = env->left_bumper_importance;
-    env->observations[1] = env->right_bumper_importance;
+    // Set initial observations: [left_bump_raw, right_bump_raw, left_light_raw, right_light_raw, left_bump_mem, right_bump_mem, left_light_mem, right_light_mem]
+    env->observations[0] = env->left_bumper ? 1.0f : 0.0f;
+    env->observations[1] = env->right_bumper ? 1.0f : 0.0f;
     env->observations[2] = env->left_light_bumper_strength;
     env->observations[3] = env->right_light_bumper_strength;
+    env->observations[4] = env->left_bumper_memory;
+    env->observations[5] = env->right_bumper_memory;
+    env->observations[6] = env->left_light_memory;
+    env->observations[7] = env->right_light_memory;
 }
 
 void c_step(Roomba* env) {
@@ -251,9 +259,11 @@ void c_step(Roomba* env) {
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0;
 
-    // Decrement bumper importance over time (minimum 0.0)
-    env->left_bumper_importance = fmaxf(0.0f, env->left_bumper_importance - dt);
-    env->right_bumper_importance = fmaxf(0.0f, env->right_bumper_importance - dt);
+    // Decay memory values by subtracting timestep (minimum 0.0)
+    env->left_bumper_memory = fmaxf(0.0f, env->left_bumper_memory - dt);
+    env->right_bumper_memory = fmaxf(0.0f, env->right_bumper_memory - dt);
+    env->left_light_memory = fmaxf(0.0f, env->left_light_memory - dt);
+    env->right_light_memory = fmaxf(0.0f, env->right_light_memory - dt);
 
     // Scale normalized actions to wheel speeds
     float target_left = env->actions[0] * MAX_WHEEL_SPEED;
@@ -302,7 +312,7 @@ void c_step(Roomba* env) {
         if (sample_x <= 0 || sample_x >= env->room_width ||
             sample_y <= 0 || sample_y >= env->room_height) {
             env->left_bumper = 1;
-            env->left_bumper_importance = 2.0f;
+            env->left_bumper_memory = fmaxf(env->left_bumper_memory, 1.0f);
             break;
         }
     }
@@ -314,7 +324,7 @@ void c_step(Roomba* env) {
         if (sample_x <= 0 || sample_x >= env->room_width ||
             sample_y <= 0 || sample_y >= env->room_height) {
             env->right_bumper = 1;
-            env->right_bumper_importance = 2.0f;
+            env->right_bumper_memory = fmaxf(env->right_bumper_memory, 1.0f);
             break;
         }
     }
@@ -388,6 +398,10 @@ void c_step(Roomba* env) {
     env->left_light_bumper_strength = fmaxf(fmaxf(left_strengths[0], left_strengths[1]), left_strengths[2]);
     env->right_light_bumper_strength = fmaxf(fmaxf(right_strengths[0], right_strengths[1]), right_strengths[2]);
 
+    // Update light bumper memory (take maximum of current strength or existing memory)
+    env->left_light_memory = fmaxf(env->left_light_memory, env->left_light_bumper_strength);
+    env->right_light_memory = fmaxf(env->right_light_memory, env->right_light_bumper_strength);
+
     // Reward forward movement only
     b2Vec2 actual_velocity = b2Body_GetLinearVelocity(env->roomba_body_id);
     float forward_velocity = actual_velocity.x * cosf(current_angle) + actual_velocity.y * sinf(current_angle);
@@ -407,11 +421,15 @@ void c_step(Roomba* env) {
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];
 
-    // Update observations: [left_bumper_importance, right_bumper_importance, left_light_bumper_strength, right_light_bumper_strength]
-    env->observations[0] = env->left_bumper_importance;
-    env->observations[1] = env->right_bumper_importance;
+    // Update observations: [left_bump_raw, right_bump_raw, left_light_raw, right_light_raw, left_bump_mem, right_bump_mem, left_light_mem, right_light_mem]
+    env->observations[0] = env->left_bumper ? 1.0f : 0.0f;
+    env->observations[1] = env->right_bumper ? 1.0f : 0.0f;
     env->observations[2] = env->left_light_bumper_strength;
     env->observations[3] = env->right_light_bumper_strength;
+    env->observations[4] = env->left_bumper_memory;
+    env->observations[5] = env->right_bumper_memory;
+    env->observations[6] = env->left_light_memory;
+    env->observations[7] = env->right_light_memory;
 
     // Check for episode termination
     if (env->tick >= env->max_steps) {
