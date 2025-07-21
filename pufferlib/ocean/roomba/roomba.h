@@ -6,6 +6,7 @@
 #include "box2d/box2d.h"
 
 #define MAX_DIRT_PIECES 20
+#define MAX_HISTORY_POINTS 1000
 
 const float ROOMBA_RADIUS = 17.425f; // cm
 const float MAX_WHEEL_SPEED = 50.0f; // cm/s
@@ -29,6 +30,10 @@ typedef struct {
     float x, y;
     int active; // 1 if dirt exists, 0 if collected
 } Dirt;
+
+typedef struct {
+    float x, y;
+} HistoryPoint;
 
 typedef struct {
     Log log;                     // Required field
@@ -61,6 +66,11 @@ typedef struct {
     // Dirt system
     Dirt dirt_pieces[MAX_DIRT_PIECES];
     int dirt_collected_this_episode;
+
+    // History tracking for visualization
+    HistoryPoint history[MAX_HISTORY_POINTS];
+    int history_count;
+    int history_index;
 } Roomba;
 
 void spawn_dirt(Roomba* env) {
@@ -184,6 +194,10 @@ void c_reset(Roomba* env) {
     env->right_bumper_importance = 0.0f;
     env->dirt_collected_this_episode = 0;
 
+    // Reset history tracking
+    env->history_count = 0;
+    env->history_index = 0;
+
     // Spawn new dirt pieces
     spawn_dirt(env);
 
@@ -228,6 +242,17 @@ void c_step(Roomba* env) {
 
     // Step Box2D simulation
     b2World_Step(env->world_id, dt, 4);
+
+    // Record position in history every 3 ticks for smoother trail
+    if (env->tick % 3 == 0) {
+        b2Vec2 current_pos = b2Body_GetPosition(env->roomba_body_id);
+        env->history[env->history_index].x = current_pos.x;
+        env->history[env->history_index].y = current_pos.y;
+        env->history_index = (env->history_index + 1) % MAX_HISTORY_POINTS;
+        if (env->history_count < MAX_HISTORY_POINTS) {
+            env->history_count++;
+        }
+    }
 
     // Bump detection: check if bumper points are outside room (simplified from original)
     b2Vec2 pos = b2Body_GetPosition(env->roomba_body_id);
@@ -329,6 +354,26 @@ void c_render(Roomba* env) {
     DrawRectangleLines(offset_x, offset_y, room_pixel_width, room_pixel_height, (Color){241, 241, 241, 255});
     DrawRectangleLines(offset_x-1, offset_y-1, room_pixel_width+2, room_pixel_height+2, (Color){241, 241, 241, 255});
     DrawRectangleLines(offset_x+1, offset_y+1, room_pixel_width-2, room_pixel_height-2, (Color){241, 241, 241, 255});
+
+    // Draw roomba movement history trail
+    if (env->history_count > 1) {
+        for (int i = 1; i < env->history_count; i++) {
+            int prev_idx = (env->history_index - env->history_count + i - 1 + MAX_HISTORY_POINTS) % MAX_HISTORY_POINTS;
+            int curr_idx = (env->history_index - env->history_count + i + MAX_HISTORY_POINTS) % MAX_HISTORY_POINTS;
+
+            float prev_x = offset_x + env->history[prev_idx].x * SCALE;
+            float prev_y = offset_y + env->history[prev_idx].y * SCALE;
+            float curr_x = offset_x + env->history[curr_idx].x * SCALE;
+            float curr_y = offset_y + env->history[curr_idx].y * SCALE;
+
+            // Fade older trail segments
+            float alpha_minus = (float)(env->history_count - i) / MAX_HISTORY_POINTS;
+            float alpha = 1.0f - alpha_minus;
+            Color trail_color = (Color){0, 150, 150, (unsigned char)(alpha * 180)};
+
+            DrawLineEx((Vector2){prev_x, prev_y}, (Vector2){curr_x, curr_y}, 2.0f, trail_color);
+        }
+    }
 
     // Get roomba position and orientation from Box2D
     b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
