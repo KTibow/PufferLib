@@ -9,7 +9,7 @@
 #define MAX_HISTORY_POINTS 1000
 
 const float ROOMBA_RADIUS = 17.425f; // cm
-const float MAX_WHEEL_SPEED = 50.0f; // cm/s
+const float MAX_WHEEL_SPEED = 25.0f; // cm/s
 const float WHEELBASE = 23.5f; // cm
 const float FRICTION = 0.01f;
 const float BUMP_CLEARANCE = 1.0f; // cm - distance to back away before bumper clears
@@ -217,7 +217,7 @@ void c_step(Roomba* env) {
     env->left_bumper_importance = fmaxf(0.0f, env->left_bumper_importance - dt);
     env->right_bumper_importance = fmaxf(0.0f, env->right_bumper_importance - dt);
 
-    // Scale normalized actions [-1, 1] to wheel speeds [-50, 50] cm/s
+    // Scale normalized actions to wheel speeds
     float target_left = env->actions[0] * MAX_WHEEL_SPEED;
     float target_right = env->actions[1] * MAX_WHEEL_SPEED;
 
@@ -301,7 +301,7 @@ void c_step(Roomba* env) {
 
     env->rewards[0] = 0.0f;
     if (forward_velocity >= -1.0f) {
-      env->rewards[0] += fabsf(forward_velocity) / 50.0f * 0.05f;
+      env->rewards[0] += fabsf(forward_velocity) / MAX_WHEEL_SPEED * 0.05f;
     }
     if (wall_collision) {
       env->rewards[0] -= 0.5f;

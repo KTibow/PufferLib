@@ -18,7 +18,7 @@ class Roomba(pufferlib.PufferEnv):
             shape=(2,), dtype=np.float32)
 
         # Action space: [left_wheel_speed, right_wheel_speed] normalized to [-1, 1]
-        # Will be scaled to ±50 cm/s in the C environment
+        # Will be scaled in the C environment
         self.single_action_space = gymnasium.spaces.Box(
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 

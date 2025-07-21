@@ -8,8 +8,8 @@ import numpy as np
 from interface import (OPCODE_MOTORS, OPCODE_START, OPCODE_SAFE, OPCODE_STOP, OPCODE_DRIVE_DIRECT,
                       OPCODE_SEND_SENSOR)
 
-max_speed = 500
-speed_factor = 0.5
+max_speed = 250
+speed_factor = 1
 dt = 0.05
 actual_dt = dt / speed_factor
 
@@ -52,7 +52,7 @@ def main():
     # Load trained model
     print("Loading model...")
     net = RoombaNet()
-    state_dict = torch.load("puffer_roomba_EX-119.pt", map_location="cpu")
+    state_dict = torch.load("puffer_roomba_EX-120.pt", map_location="cpu")
     net.load_state_dict(state_dict)
     net.eval()
 
@@ -100,7 +100,6 @@ def main():
                 actions = net(obs_tensor)[0].numpy()
 
             # Scale actions from [-1,1] to wheel speeds in mm/s
-            # Max wheel speed is 50 cm/s = 500 mm/s according to roomba.h
             base_left_speed = actions[0] * max_speed
             base_right_speed = actions[1] * max_speed
 
