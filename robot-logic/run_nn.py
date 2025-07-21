@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+print("Importing...")
 import serial
 import time
 import torch
@@ -16,13 +17,13 @@ actual_dt = dt / speed_factor
 class RoombaNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Linear(2, 128))  # 2 inputs: left and right bumper importance
+        self.encoder = nn.Sequential(nn.Linear(2, 128), nn.GELU())  # 2 inputs: left and right bumper importance
         self.decoder_mean = nn.Linear(128, 2)  # 128 hidden -> 2 wheel speeds
         self.decoder_logstd = nn.Parameter(torch.zeros(1, 2))
         self.value = nn.Linear(128, 1)  # Value function (not used for inference)
 
     def forward(self, x):
-        hidden = torch.relu(self.encoder(x))
+        hidden = self.encoder(x)
         mean = self.decoder_mean(hidden)
         return mean
 
@@ -30,7 +31,7 @@ def drive(roomba, left_speed, right_speed):
     # Clamp to valid range and convert to bytes
     left = max(-max_speed, min(max_speed, int(left_speed)))
     right = max(-max_speed, min(max_speed, int(right_speed)))
-    cmd = OPCODE_DRIVE_DIRECT + left.to_bytes(2, "big", signed=True) + right.to_bytes(2, "big", signed=True)
+    cmd = OPCODE_DRIVE_DIRECT + right.to_bytes(2, "big", signed=True) + left.to_bytes(2, "big", signed=True)
     roomba.write(cmd)
 
 def read_bumpers(roomba):
@@ -51,21 +52,19 @@ def main():
     # Load trained model
     print("Loading model...")
     net = RoombaNet()
-    state_dict = torch.load("puffer_roomba_EX-117.pt", map_location="cpu")
+    state_dict = torch.load("puffer_roomba_EX-119.pt", map_location="cpu")
     net.load_state_dict(state_dict)
     net.eval()
-    print("Model loaded!")
 
     # Connect to Roomba
-    roomba = serial.Serial("/dev/ttyUSB0", 115200, timeout=0.1)
     print("Setting up Roomba...")
+    roomba = serial.Serial("/dev/ttyUSB0", 115200, timeout=0.1)
     roomba.write(OPCODE_START)
     roomba.write(OPCODE_SAFE)
     time.sleep(0.2)
     roomba.write(bytes([150, 0]))
     time.sleep(0.1)
     roomba.read_all()
-    print("Roomba ready!")
 
     print("Running neural network control... Press Ctrl+C to stop")
     roomba.write(OPCODE_MOTORS + bytes([0b00000110]))
