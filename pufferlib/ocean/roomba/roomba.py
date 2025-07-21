@@ -10,13 +10,12 @@ dt = 0.05
 class Roomba(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128,
                  room_width=800.0, room_height=600.0, max_steps=1000, buf=None, seed=0):
-        # Observation space: [left_bumper_importance, right_bumper_importance, minutes_since_start]
+        # Observation space: [left_bumper_importance, right_bumper_importance]
         # Bumper importance: 2.0=just hit, 0.0=not hit recently (decays over 2 seconds)
-        # Minutes since start: 0.0 to max_steps*dt/60 (episode time in minutes)
         self.single_observation_space = gymnasium.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0]),
-            high=np.array([2.0, 2.0, max_steps*dt/60.0]),
-            shape=(3,), dtype=np.float32)
+            low=np.array([0.0, 0.0]),
+            high=np.array([2.0, 2.0]),
+            shape=(2,), dtype=np.float32)
 
         # Action space: [left_wheel_speed, right_wheel_speed] normalized to [-1, 1]
         # Will be scaled to ±50 cm/s in the C environment

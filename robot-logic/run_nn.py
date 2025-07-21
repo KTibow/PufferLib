@@ -16,7 +16,7 @@ actual_dt = dt / speed_factor
 class RoombaNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Linear(3, 128))  # Changed input size from 2 to 3
+        self.encoder = nn.Sequential(nn.Linear(2, 128))  # 2 inputs: left and right bumper importance
         self.decoder_mean = nn.Linear(128, 2)  # 128 hidden -> 2 wheel speeds
         self.decoder_logstd = nn.Parameter(torch.zeros(1, 2))
         self.value = nn.Linear(128, 1)  # Value function (not used for inference)
@@ -92,11 +92,8 @@ def main():
             else:
                 right_bumper_importance = max(0.0, right_bumper_importance - 0.05)
 
-            # Calculate minutes since start based on steps and dt
-            minutes_since_start = (step * dt) / 60.0
-
-            # Create observation array with 3 values
-            obs = np.array([left_bumper_importance, right_bumper_importance, minutes_since_start], dtype=np.float32)
+            # Create observation array with 2 values
+            obs = np.array([left_bumper_importance, right_bumper_importance], dtype=np.float32)
 
             # Run neural network
             with torch.no_grad():
@@ -117,7 +114,7 @@ def main():
 
             processing_time = time.time() - start_time
             # Calculate actual timestep duration (extended by 1/speed_factor to maintain distance)
-            print(f"Step {step:03d} ({processing_time:.3f}s): bumps {left_bumper_importance:.2f},{right_bumper_importance:.2f} ({int(left_bump)},{int(right_bump)}) min_since_start={minutes_since_start:.2f} -> actions={actions} speeds=({left_speed:.0f}, {right_speed:.0f}) mm/s [factor={speed_factor}]")
+            print(f"Step {step:03d} ({processing_time:.3f}s): bumps {left_bumper_importance:.2f},{right_bumper_importance:.2f} ({int(left_bump)},{int(right_bump)}) -> actions={actions} speeds=({left_speed:.0f}, {right_speed:.0f}) mm/s [factor={speed_factor}]")
             if processing_time < actual_dt:
                 time.sleep(actual_dt - processing_time)
             step += 1
