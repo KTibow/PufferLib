@@ -5,9 +5,8 @@ import time
 import torch
 import torch.nn as nn
 import numpy as np
-import struct
-from interface import (OPCODE_MOTORS, OPCODE_START, OPCODE_SAFE, OPCODE_STOP, OPCODE_DRIVE_DIRECT,
-                      OPCODE_SEND_SENSOR, OPCODE_SEND_SENSORS, PACKETS)
+from interface import (OPCODE_START, OPCODE_SAFE, OPCODE_STOP, OPCODE_DRIVE_DIRECT,  # noqa: E402
+                      OPCODE_SEND_SENSORS)
 
 max_speed = 250
 speed_factor = 1
@@ -88,7 +87,7 @@ def main():
     # Load trained model
     print("Loading model...")
     net = RoombaNet()
-    state_dict = torch.load("puffer_roomba_EX-139.pt", map_location="cpu")
+    state_dict = torch.load("puffer_roomba_EX-141.pt", map_location="cpu")
     net.load_state_dict(state_dict)
     net.eval()
 

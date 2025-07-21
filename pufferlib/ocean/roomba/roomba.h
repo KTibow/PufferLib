@@ -9,14 +9,15 @@
 #define MAX_HISTORY_POINTS 1000
 #define SCALE 2.0f  // Pixels per cm - reasonable room size on screen
 
-const float ROOMBA_RADIUS = 17.425f; // cm
-const float LIGHT_BUMPER_RADIUS = 22.425f; // cm - 5cm larger than roomba radius
+const float ROOMBA_RADIUS = 17.1f; // cm
+const float INNER_ROOMBA_RADIUS = ROOMBA_RADIUS - 1.0f; // cm - minus the bumper
+const float LIGHT_BUMPER_RADIUS = ROOMBA_RADIUS + 5.0f; // cm - 5cm larger than roomba radius
 const float MAX_WHEEL_SPEED = 25.0f; // cm/s
 const float WHEELBASE = 23.5f; // cm
 const float FRICTION = 0.1f;
-const float BUMP_CLEARANCE = 1.0f; // cm - distance to back away before bumper clears
 const float BRUSH_WIDTH = 16.51f; // cm - 6.5" brush width
 const float BRUSH_DEPTH = 7.62f; // cm - 3" brush depth
+const float UNBRUSHED_RADIUS = 10.0f; // cm
 const float DIRT_DISPLAY_RADIUS = 2.5f; // cm - visual radius for dirt
 const float dt = 0.05f;
 
@@ -88,8 +89,8 @@ typedef struct {
 
 void spawn_dirt(Roomba* env) {
     for (int i = 0; i < MAX_DIRT_PIECES; i++) {
-        env->dirt_pieces[i].x = (float)(rand()) / RAND_MAX * (env->room_width - 2 * ROOMBA_RADIUS) + ROOMBA_RADIUS;
-        env->dirt_pieces[i].y = (float)(rand()) / RAND_MAX * (env->room_height - 2 * ROOMBA_RADIUS) + ROOMBA_RADIUS;
+        env->dirt_pieces[i].x = (float)(rand()) / RAND_MAX * (env->room_width - 2 * UNBRUSHED_RADIUS) + UNBRUSHED_RADIUS;
+        env->dirt_pieces[i].y = (float)(rand()) / RAND_MAX * (env->room_height - 2 * UNBRUSHED_RADIUS) + UNBRUSHED_RADIUS;
         env->dirt_pieces[i].active = 1;
     }
 }
@@ -221,7 +222,7 @@ void c_reset(Roomba* env) {
 
         b2Circle roomba_circle;
         roomba_circle.center = (b2Vec2){0, 0};
-        roomba_circle.radius = ROOMBA_RADIUS - BUMP_CLEARANCE;
+        roomba_circle.radius = INNER_ROOMBA_RADIUS;
 
         b2ShapeDef roomba_shape_def = b2DefaultShapeDef();
         roomba_shape_def.density = 1.0f;
