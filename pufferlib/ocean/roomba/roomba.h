@@ -548,8 +548,8 @@ void c_render(Roomba* env) {
     snprintf(sensor_text, sizeof(sensor_text),
         "%.2f/%.2f | %.0f,%.0f going %.0f/%.0f facing %.0f | Bump: %.2f,%.2f/%d,%d | Dirt: %d/%d",
         env->rewards[0], env->episode_return,
-        transform.p.x, transform.p.y, fmodf(roomba_angle * 180.0f / PI, 360.0f),
-        env->left_wheel_speed, env->right_wheel_speed,
+        transform.p.x, transform.p.y, env->left_wheel_speed, env->right_wheel_speed,
+        fmodf(roomba_angle * 180.0f / PI, 360.0f),
         env->left_light_bumper_strength, env->right_light_bumper_strength,
         env->left_bumper, env->right_bumper,
         env->dirt_collected_this_episode, MAX_DIRT_PIECES);
