@@ -87,7 +87,7 @@ def main():
     # Load trained model
     print("Loading model...")
     net = RoombaNet()
-    state_dict = torch.load("puffer_roomba_EX-141.pt", map_location="cpu")
+    state_dict = torch.load("puffer_roomba_EX-146.pt", map_location="cpu")
     net.load_state_dict(state_dict)
     net.eval()
 

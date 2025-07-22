@@ -40,7 +40,7 @@ typedef struct {
 
 typedef struct {
     Log log;                     // Required field
-    float* observations;         // Required field. 4D: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
+    float* observations;         // Required field. 4D: [left_bumper_strength, right_bumper_strength, left_bumper_memory, right_bumper_memory]
     float* actions;              // Required field. 2D: [left_wheel_speed, right_wheel_speed] in cm/s
     float* rewards;              // Required field
     unsigned char* terminals;    // Required field
@@ -63,8 +63,10 @@ typedef struct {
     // Sensors
     int left_bumper;             // 1 if left bumper pressed, 0 otherwise
     int right_bumper;            // 1 if right bumper pressed, 0 otherwise
-    float left_bumper_memory;    // Decaying memory of left bumper hits: max(current, previous-dt)
-    float right_bumper_memory;   // Decaying memory of right bumper hits: max(current, previous-dt)
+    float left_bumper_strength;  // Unified current strength: physical_bumper ? 1.0 : light_strength
+    float right_bumper_strength; // Unified current strength: physical_bumper ? 1.0 : light_strength
+    float left_bumper_memory;    // Unified decaying memory: max(current_unified_strength, previous-dt)
+    float right_bumper_memory;   // Unified decaying memory: max(current_unified_strength, previous-dt)
 
     // Light bumper sensors (6 discrete sensors at specific angles)
     // Angles relative to front of robot: Left (-39.6°), Front Left (-18°), Center Left (-6°),
@@ -74,8 +76,6 @@ typedef struct {
     // Aggregated light bumper sensors for observations
     float left_light_bumper_strength;   // Strength from 0.0-1.0 based on piecewise function
     float right_light_bumper_strength;  // Strength from 0.0-1.0 based on piecewise function
-    float left_light_memory;            // Decaying memory of left light bumper: max(current, previous-dt)
-    float right_light_memory;           // Decaying memory of right light bumper: max(current, previous-dt)
 
     // Dirt system
     Dirt dirt_pieces[MAX_DIRT_PIECES];
@@ -140,28 +140,47 @@ int check_dirt_collection(Roomba* env) {
 }
 
 
-float binary_search_distance(float pos_x, float pos_y, float cos_angle, float sin_angle,
-                            float room_width, float room_height, float max_range) {
-    float min_dist = 0.0f;
-    float max_dist = max_range;
-    float epsilon = 0.1f; // 1mm precision
-    int max_iterations = 20; // Safety limit
-    int iterations = 0;
+// Ray cast callback structure for light bumper detection
+typedef struct {
+    float closest_distance;
+    int hit_found;
+} RayCastResult;
 
-    while (max_dist - min_dist > epsilon && iterations < max_iterations) {
-        float mid = (min_dist + max_dist) / 2.0f;
-        float sample_x = pos_x + mid * cos_angle;
-        float sample_y = pos_y + mid * sin_angle;
+// Ray cast callback function for Box2D
+float ray_cast_callback(b2ShapeId shapeId, b2Vec2 point, b2Vec2 normal, float fraction, void* context) {
+    RayCastResult* result = (RayCastResult*)context;
 
-        if (sample_x <= 0 || sample_x >= room_width ||
-            sample_y <= 0 || sample_y >= room_height) {
-            max_dist = mid;  // Wall is closer
-        } else {
-            min_dist = mid;  // Wall is farther
-        }
-        iterations++;
+    // Skip if this is the robot's own body (should be filtered out, but just in case)
+    if (fraction < 0.01f) return 1.0f; // Continue ray, ignore very close hits
+
+    // fraction is the normalized distance (0-1) along the ray where the hit occurred
+    float distance = fraction * result->closest_distance; // result->closest_distance stores max_range
+
+    // Keep the closest hit
+    if (!result->hit_found || distance < result->closest_distance) {
+        result->closest_distance = distance;
+        result->hit_found = 1;
     }
-    return max_dist;
+
+    // Continue ray casting to find closest hit
+    return fraction;
+}
+
+// Box2D ray cast for light bumper distance detection
+float box2d_ray_cast_distance(b2WorldId world_id, float pos_x, float pos_y, float cos_angle, float sin_angle) {
+    // Detect walls well
+    float max_range = 20.0f;
+
+    // Start ray from robot's edge to avoid hitting own body
+    b2Vec2 origin = {pos_x + INNER_ROOMBA_RADIUS * cos_angle, pos_y + INNER_ROOMBA_RADIUS * sin_angle};
+    b2Vec2 translation = {max_range * cos_angle, max_range * sin_angle};
+
+    RayCastResult result = {max_range, 0}; // Initialize with max range
+
+    // Perform ray cast
+    b2World_CastRay(world_id, origin, translation, b2DefaultQueryFilter(), ray_cast_callback, &result);
+
+    return result.closest_distance;
 }
 
 float calculate_light_bumper_strength(float distance) {
@@ -173,6 +192,65 @@ float calculate_light_bumper_strength(float distance) {
     } else {
         // Linear fall from 0.5 to 0 between 2cm and 0cm
         return distance / 2.0f * 0.5f;
+    }
+}
+
+// Helper function to check for physics collisions (for penalties)
+int has_physics_collision(b2BodyId body_id) {
+    int contact_count = b2Body_GetContactCapacity(body_id);
+    if (contact_count == 0) return 0;
+
+    b2ContactData* contacts = malloc(contact_count * sizeof(b2ContactData));
+    int actual_count = b2Body_GetContactData(body_id, contacts, contact_count);
+    for (int i = 0; i < actual_count; i++) {
+        if (contacts[i].manifold.pointCount > 0) {
+            free(contacts);
+            return 1;
+        }
+    }
+    free(contacts);
+    return 0;
+}
+
+void update_soft_bumpers(Roomba* env) {
+    // Reset bumper states
+    env->left_bumper = 0;
+    env->right_bumper = 0;
+
+    // Get current robot position and orientation
+    b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
+    float robotAngle = b2Rot_GetAngle(transform.q);
+
+    float leftAngleStart = PI/36;
+    float leftAngleEnd = PI/2;
+    float rightAngleStart = -PI/36;
+    float rightAngleEnd = -PI/2;
+    float bumperSize = ROOMBA_RADIUS - INNER_ROOMBA_RADIUS;
+
+    // Check left side
+    for (float rayAngle = robotAngle + leftAngleStart; rayAngle < robotAngle + leftAngleEnd; rayAngle += PI/36) {
+        float distance = box2d_ray_cast_distance(env->world_id,
+            transform.p.x, transform.p.y,
+            cosf(rayAngle), sinf(rayAngle)
+        );
+
+        if (distance <= bumperSize) {
+            env->left_bumper = 1;
+            break;
+        }
+    }
+
+    // Check right side
+    for (float rayAngle = robotAngle + rightAngleStart; rayAngle < robotAngle + rightAngleEnd; rayAngle -= PI/36) {
+        float distance = box2d_ray_cast_distance(env->world_id,
+            transform.p.x, transform.p.y,
+            cosf(rayAngle), sinf(rayAngle)
+        );
+
+        if (distance <= bumperSize) {
+            env->right_bumper = 1;
+            break;
+        }
     }
 }
 
@@ -195,6 +273,7 @@ void c_reset(Roomba* env) {
         b2BodyDef wall_def = b2DefaultBodyDef();
         wall_def.type = b2_staticBody;
         b2ShapeDef wall_shape_def = b2DefaultShapeDef();
+        wall_shape_def.enableSensorEvents = true;
         float wall_thickness = 1.0f;
 
         // Wall data: {x, y, half_width, half_height}
@@ -243,6 +322,8 @@ void c_reset(Roomba* env) {
     env->episode_return = 0.0f;
     env->left_bumper = 0;
     env->right_bumper = 0;
+    env->left_bumper_strength = 0.0f;
+    env->right_bumper_strength = 0.0f;
     env->left_bumper_memory = 0.0f;
     env->right_bumper_memory = 0.0f;
     for (int i = 0; i < 6; i++) {
@@ -250,8 +331,6 @@ void c_reset(Roomba* env) {
     }
     env->left_light_bumper_strength = 0.0f;
     env->right_light_bumper_strength = 0.0f;
-    env->left_light_memory = 0.0f;
-    env->right_light_memory = 0.0f;
     env->dirt_collected_this_episode = 0;
 
     // Reset history tracking
@@ -261,31 +340,26 @@ void c_reset(Roomba* env) {
     // Spawn new dirt pieces
     spawn_dirt(env);
 
-    // Set initial observations: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
-    // Unified bumper: physical bumper forces to 1.0, otherwise use light bumper strength
-    env->observations[0] = env->left_bumper ? 1.0f : env->left_light_bumper_strength;
-    env->observations[1] = env->right_bumper ? 1.0f : env->right_light_bumper_strength;
+    // Set initial observations: [left_bumper_strength, right_bumper_strength, left_bumper_memory, right_bumper_memory]
+    env->observations[0] = env->left_bumper_strength;
+    env->observations[1] = env->right_bumper_strength;
     env->observations[2] = env->left_bumper_memory;
     env->observations[3] = env->right_bumper_memory;
 }
 
 void c_step(Roomba* env) {
     env->tick += 1;
-    env->left_bumper = 0;
-    env->right_bumper = 0;
     for (int i = 0; i < 6; i++) {
         env->light_bumper_distances[i] = 100.0f;  // Initialize to large distance
     }
     env->left_light_bumper_strength = 0.0f;
     env->right_light_bumper_strength = 0.0f;
+    env->left_bumper_strength = 0.0f;
+    env->right_bumper_strength = 0.0f;
+    env->left_bumper_memory = fmaxf(0.0f, env->left_bumper_memory - dt/3.0f); // Decay
+    env->right_bumper_memory = fmaxf(0.0f, env->right_bumper_memory - dt/3.0f); // Decay
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0;
-
-    // Decay memory values by subtracting timestep/3 for 3 second decay (minimum 0.0)
-    env->left_bumper_memory = fmaxf(0.0f, env->left_bumper_memory - dt/3.0f);
-    env->right_bumper_memory = fmaxf(0.0f, env->right_bumper_memory - dt/3.0f);
-    env->left_light_memory = fmaxf(0.0f, env->left_light_memory - dt/3.0f);
-    env->right_light_memory = fmaxf(0.0f, env->right_light_memory - dt/3.0f);
 
     // Apply wheel speed commands
     float target_left = env->actions[0] * MAX_WHEEL_SPEED;
@@ -318,6 +392,8 @@ void c_step(Roomba* env) {
     // Step Box2D simulation
     b2World_Step(env->world_id, dt, 4);
 
+    b2Transform new_transform = b2Body_GetTransform(env->roomba_body_id);
+
     // Record position in history every 3 ticks for smoother trail
     if (env->tick % 3 == 0) {
         b2Vec2 current_pos = b2Body_GetPosition(env->roomba_body_id);
@@ -329,80 +405,29 @@ void c_step(Roomba* env) {
         }
     }
 
-    // Bump detection: check if bumper points are outside room
-    b2Vec2 pos = b2Body_GetPosition(env->roomba_body_id);
+    // Update soft bumpers using ray casting
+    update_soft_bumpers(env);
 
-    // Check left bumper arc (theta - PI/36 to theta - PI/2)
-    for (float angle_offset = current_angle - PI/36; angle_offset > current_angle - PI/2; angle_offset -= PI/36) {
-        float sample_x = pos.x + ROOMBA_RADIUS * cosf(angle_offset);
-        float sample_y = pos.y + ROOMBA_RADIUS * sinf(angle_offset);
-        if (sample_x <= 0 || sample_x >= env->room_width ||
-            sample_y <= 0 || sample_y >= env->room_height) {
-            env->left_bumper = 1;
-            env->left_bumper_memory = fmaxf(env->left_bumper_memory, 1.0f);
-            break;
-        }
-    }
+    // Check physics body contacts for collision penalties
+    int physics_collision = has_physics_collision(env->roomba_body_id);
 
-    // Check right bumper arc (theta + PI/36 to theta + PI/2)
-    for (float angle_offset = current_angle + PI/36; angle_offset < current_angle + PI/2; angle_offset += PI/36) {
-        float sample_x = pos.x + ROOMBA_RADIUS * cosf(angle_offset);
-        float sample_y = pos.y + ROOMBA_RADIUS * sinf(angle_offset);
-        if (sample_x <= 0 || sample_x >= env->room_width ||
-            sample_y <= 0 || sample_y >= env->room_height) {
-            env->right_bumper = 1;
-            env->right_bumper_memory = fmaxf(env->right_bumper_memory, 1.0f);
-            break;
-        }
-    }
-
-    // Check for wall collision using Box2D contacts
-    int wall_collision = 0;
-    int contact_count = b2Body_GetContactCapacity(env->roomba_body_id);
-    if (contact_count > 0) {
-        b2ContactData* contacts = malloc(contact_count * sizeof(b2ContactData));
-        int actual_count = b2Body_GetContactData(env->roomba_body_id, contacts, contact_count);
-
-        for (int i = 0; i < actual_count; i++) {
-            if (contacts[i].manifold.pointCount > 0) {
-                wall_collision = 1;
-                break;
-            }
-        }
-        free(contacts);
-    }
-
-    // Light bumper detection: 6 discrete sensors at specific angles with distance calculation
+    // Light bumper detection: 6 discrete sensors at specific angles with distance calculation using Box2D ray casting
     // Sensor angles in degrees relative to front of robot
     float sensor_angles[6] = {39.6f, 18.0f, 6.0f, -15.0f, -30.5f, -64.0f};
 
+    // Get current robot position
+    b2Vec2 pos = b2Body_GetPosition(env->roomba_body_id);
+
     for (int i = 0; i < 6; i++) {
-        float sensor_angle = current_angle + sensor_angles[i] * PI / 180.0f;
+        float sensor_angle = b2Rot_GetAngle(new_transform.q) + sensor_angles[i] * PI / 180.0f;
         float cos_angle = cosf(sensor_angle);
         float sin_angle = sinf(sensor_angle);
 
-        // Binary search ray cast from robot position outward in sensor direction
-        float max_range = 50.0f; // cm - enough to detect walls
-        float distance = binary_search_distance(pos.x, pos.y, cos_angle, sin_angle,
-                                               env->room_width, env->room_height, max_range);
-
-        // Convert from center-to-wall distance to edge-to-wall distance
-        if (distance >= max_range) {
-            // No wall found within range - robot edge is far from any wall
-            env->light_bumper_distances[i] = 100.0f;  // Large distance indicating no nearby walls
-        } else {
-            // Wall found - calculate edge-to-wall distance
-            float edge_distance = distance - ROOMBA_RADIUS;
-            env->light_bumper_distances[i] = fmaxf(0.0f, edge_distance);
-        }
+        // Box2D ray cast from robot position outward in sensor direction
+        float distance = box2d_ray_cast_distance(env->world_id, pos.x, pos.y, cos_angle, sin_angle);
+        env->light_bumper_distances[i] = distance;
     }
 
-    // // Debug: print light_bumper_distances to stdout
-    // printf("light_bumper_distances: ");
-    // for (int dbg_i = 0; dbg_i < 6; dbg_i++) {
-    //     printf("%.2f ", env->light_bumper_distances[dbg_i]);
-    // }
-    // printf("\n");
     // Aggregate sensors into left/right groups using the piecewise strength function
     float left_strengths[3] = {
         calculate_light_bumper_strength(env->light_bumper_distances[0]),
@@ -419,21 +444,23 @@ void c_step(Roomba* env) {
     env->left_light_bumper_strength = fmaxf(fmaxf(left_strengths[0], left_strengths[1]), left_strengths[2]);
     env->right_light_bumper_strength = fmaxf(fmaxf(right_strengths[0], right_strengths[1]), right_strengths[2]);
 
-    // Update bumper memory with unified logic: take maximum of current unified bumper value or existing memory
-    float current_left_unified = env->left_bumper ? 1.0f : env->left_light_bumper_strength;
-    float current_right_unified = env->right_bumper ? 1.0f : env->right_light_bumper_strength;
-    env->left_light_memory = fmaxf(env->left_light_memory, current_left_unified);
-    env->right_light_memory = fmaxf(env->right_light_memory, current_right_unified);
+    // Update unified bumper strength: physical bumper forces to 1.0, otherwise use light bumper strength
+    env->left_bumper_strength = env->left_bumper ? 1.0f : env->left_light_bumper_strength;
+    env->right_bumper_strength = env->right_bumper ? 1.0f : env->right_light_bumper_strength;
+
+    // Update unified bumper memory: take maximum of current unified strength or existing memory
+    env->left_bumper_memory = fmaxf(env->left_bumper_memory, env->left_bumper_strength);
+    env->right_bumper_memory = fmaxf(env->right_bumper_memory, env->right_bumper_strength);
 
     // Reward forward movement only
     b2Vec2 actual_velocity = b2Body_GetLinearVelocity(env->roomba_body_id);
-    float forward_velocity = actual_velocity.x * cosf(current_angle) + actual_velocity.y * sinf(current_angle);
+    float actual_forward_velocity = actual_velocity.x * cosf(b2Rot_GetAngle(new_transform.q)) + actual_velocity.y * sinf(b2Rot_GetAngle(new_transform.q));
 
     env->rewards[0] = 0.0f;
-    if (forward_velocity >= -1.0f) {
-      env->rewards[0] += fabsf(forward_velocity) / MAX_WHEEL_SPEED * 0.05f;
+    if (actual_forward_velocity >= -1.0f) {
+      env->rewards[0] += fabsf(actual_forward_velocity) / MAX_WHEEL_SPEED * 0.05f;
     }
-    if (wall_collision) {
+    if (physics_collision) {
       env->rewards[0] -= 0.5f;
     }
 
@@ -444,10 +471,9 @@ void c_step(Roomba* env) {
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];
 
-    // Update observations: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
-    // Unified bumper: physical bumper forces to 1.0, otherwise use light bumper strength
-    env->observations[0] = env->left_bumper ? 1.0f : env->left_light_bumper_strength;
-    env->observations[1] = env->right_bumper ? 1.0f : env->right_light_bumper_strength;
+    // Update observations: [left_bumper_strength, right_bumper_strength, left_bumper_memory, right_bumper_memory]
+    env->observations[0] = env->left_bumper_strength;
+    env->observations[1] = env->right_bumper_strength;
     env->observations[2] = env->left_bumper_memory;
     env->observations[3] = env->right_bumper_memory;
 
@@ -583,14 +609,12 @@ void c_render(Roomba* env) {
 
     // Draw sensor information text
     char sensor_text[300];
-    float left_unified = env->left_bumper ? 1.0f : env->left_light_bumper_strength;
-    float right_unified = env->right_bumper ? 1.0f : env->right_light_bumper_strength;
     snprintf(sensor_text, sizeof(sensor_text),
         "%.2f/%.2f | %.0f,%.0f going %.0f/%.0f facing %.0f | %.2f,%.2f | Dirt: %d/%d",
         env->rewards[0], env->episode_return,
         transform.p.x, transform.p.y, env->left_wheel_speed, env->right_wheel_speed,
         fmodf(roomba_angle * 180.0f / PI, 360.0f),
-        left_unified, right_unified,
+        env->left_bumper_strength, env->right_bumper_strength,
         env->dirt_collected_this_episode, MAX_DIRT_PIECES);
     DrawText(sensor_text, 10, 10, 20, (Color){241, 241, 241, 255});
 
