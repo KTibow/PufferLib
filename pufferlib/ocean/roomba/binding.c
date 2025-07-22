@@ -4,8 +4,6 @@
 #include "../env_binding.h"
 
 static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
-    env->room_width = unpack(kwargs, "room_width");
-    env->room_height = unpack(kwargs, "room_height");
     env->max_steps = (int)unpack(kwargs, "max_steps");
     return 0;
 }

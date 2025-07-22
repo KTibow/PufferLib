@@ -9,7 +9,7 @@ from pufferlib.ocean.roomba import binding
 dt = 0.05
 class Roomba(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128,
-                 room_width=800.0, room_height=600.0, max_steps=1000, buf=None, seed=0):
+                 max_steps=1000, buf=None, seed=0):
         # Observation space: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
         # Unified bumper: physical bumper forces to 1.0, otherwise uses light bumper strength (0.0-1.0)
         # Memory values: decaying maximum of unified bumper readings (0.0-1.0)
@@ -26,15 +26,13 @@ class Roomba(pufferlib.PufferEnv):
         self.render_mode = render_mode
         self.num_agents = num_envs
         self.log_interval = log_interval
-        self.room_width = room_width
-        self.room_height = room_height
         self.max_steps = max_steps
 
         super().__init__(buf)
         self.c_envs = binding.vec_init(
             self.observations, self.actions, self.rewards,
             self.terminals, self.truncations, num_envs, seed,
-            room_width=room_width, room_height=room_height, max_steps=max_steps)
+            max_steps=max_steps)
 
     def reset(self, seed=0):
         binding.vec_reset(self.c_envs, seed)
@@ -63,7 +61,7 @@ class Roomba(pufferlib.PufferEnv):
 if __name__ == '__main__':
     # Simple test of the environment
     N = 1
-    env = Roomba(num_envs=N, room_width=600.0, room_height=400.0, max_steps=500)
+    env = Roomba(num_envs=N, max_steps=500)
     env.reset()
     steps = 0
 

@@ -9,6 +9,11 @@
 #define MAX_HISTORY_POINTS 1000
 #define SCALE 2.0f  // Pixels per cm - reasonable room size on screen
 
+#define MIN_ROOM_WIDTH 100.0f  // cm - minimum room width
+#define MAX_ROOM_WIDTH 300.0f  // cm - maximum room width
+#define MIN_ROOM_HEIGHT 100.0f // cm - minimum room height
+#define MAX_ROOM_HEIGHT 300.0f // cm - maximum room height
+
 const float ROOMBA_RADIUS = 17.1f; // cm
 const float INNER_ROOMBA_RADIUS = ROOMBA_RADIUS - 1.0f; // cm - minus the bumper
 const float LIGHT_BUMPER_RADIUS = ROOMBA_RADIUS + 5.0f; // cm - 5cm larger than roomba radius
@@ -86,6 +91,11 @@ typedef struct {
     int history_count;
     int history_index;
 } Roomba;
+
+void generate_random_room_size(Roomba* env) {
+    env->room_width = MIN_ROOM_WIDTH + ((float)rand() / RAND_MAX) * (MAX_ROOM_WIDTH - MIN_ROOM_WIDTH);
+    env->room_height = MIN_ROOM_HEIGHT + ((float)rand() / RAND_MAX) * (MAX_ROOM_HEIGHT - MIN_ROOM_HEIGHT);
+}
 
 void spawn_dirt(Roomba* env) {
     for (int i = 0; i < MAX_DIRT_PIECES; i++) {
@@ -263,50 +273,57 @@ void add_log(Roomba* env) {
 }
 
 void c_reset(Roomba* env) {
-    // Initialize Box2D world if not already done
-    if (!b2World_IsValid(env->world_id)) {
-        b2WorldDef world_def = b2DefaultWorldDef();
-        world_def.gravity = (b2Vec2){0, 0}; // No gravity for top-down 2D simulation
-        env->world_id = b2CreateWorld(&world_def);
+    // Generate new random room dimensions for each reset
+    generate_random_room_size(env);
 
-        // Create room walls
-        b2BodyDef wall_def = b2DefaultBodyDef();
-        wall_def.type = b2_staticBody;
-        b2ShapeDef wall_shape_def = b2DefaultShapeDef();
-        wall_shape_def.enableSensorEvents = true;
-        float wall_thickness = 1.0f;
-
-        // Wall data: {x, y, half_width, half_height}
-        float walls[4][4] = {
-            {env->room_width / 2.0f, 0, env->room_width / 2.0f, wall_thickness / 2.0f}, // bottom
-            {env->room_width / 2.0f, env->room_height, env->room_width / 2.0f, wall_thickness / 2.0f}, // top
-            {0, env->room_height / 2.0f, wall_thickness / 2.0f, env->room_height / 2.0f}, // left
-            {env->room_width, env->room_height / 2.0f, wall_thickness / 2.0f, env->room_height / 2.0f} // right
-        };
-
-        for (int i = 0; i < 4; i++) {
-            wall_def.position = (b2Vec2){walls[i][0], walls[i][1]};
-            b2BodyId wall = b2CreateBody(env->world_id, &wall_def);
-            b2Polygon box = b2MakeBox(walls[i][2], walls[i][3]);
-            b2CreatePolygonShape(wall, &wall_shape_def, &box);
-        }
-
-        // Create roomba body
-        b2BodyDef roomba_def = b2DefaultBodyDef();
-        roomba_def.type = b2_dynamicBody;
-        roomba_def.position = (b2Vec2){env->room_width / 2.0f, env->room_height / 2.0f};
-        roomba_def.linearDamping = 2.0f;
-        roomba_def.angularDamping = 2.0f;
-        env->roomba_body_id = b2CreateBody(env->world_id, &roomba_def);
-
-        b2Circle roomba_circle;
-        roomba_circle.center = (b2Vec2){0, 0};
-        roomba_circle.radius = INNER_ROOMBA_RADIUS;
-
-        b2ShapeDef roomba_shape_def = b2DefaultShapeDef();
-        roomba_shape_def.density = 1.0f;
-        b2CreateCircleShape(env->roomba_body_id, &roomba_shape_def, &roomba_circle);
+    // Always destroy and recreate world to handle new room dimensions
+    if (b2World_IsValid(env->world_id)) {
+        b2DestroyWorld(env->world_id);
+        env->world_id = b2_nullWorldId;
     }
+
+    // Initialize Box2D world with new room dimensions
+    b2WorldDef world_def = b2DefaultWorldDef();
+    world_def.gravity = (b2Vec2){0, 0}; // No gravity for top-down 2D simulation
+    env->world_id = b2CreateWorld(&world_def);
+
+    // Create room walls
+    b2BodyDef wall_def = b2DefaultBodyDef();
+    wall_def.type = b2_staticBody;
+    b2ShapeDef wall_shape_def = b2DefaultShapeDef();
+    wall_shape_def.enableSensorEvents = true;
+    float wall_thickness = 1.0f;
+
+    // Wall data: {x, y, half_width, half_height}
+    float walls[4][4] = {
+        {env->room_width / 2.0f, 0, env->room_width / 2.0f, wall_thickness / 2.0f}, // bottom
+        {env->room_width / 2.0f, env->room_height, env->room_width / 2.0f, wall_thickness / 2.0f}, // top
+        {0, env->room_height / 2.0f, wall_thickness / 2.0f, env->room_height / 2.0f}, // left
+        {env->room_width, env->room_height / 2.0f, wall_thickness / 2.0f, env->room_height / 2.0f} // right
+    };
+
+    for (int i = 0; i < 4; i++) {
+        wall_def.position = (b2Vec2){walls[i][0], walls[i][1]};
+        b2BodyId wall = b2CreateBody(env->world_id, &wall_def);
+        b2Polygon box = b2MakeBox(walls[i][2], walls[i][3]);
+        b2CreatePolygonShape(wall, &wall_shape_def, &box);
+    }
+
+    // Create roomba body
+    b2BodyDef roomba_def = b2DefaultBodyDef();
+    roomba_def.type = b2_dynamicBody;
+    roomba_def.position = (b2Vec2){env->room_width / 2.0f, env->room_height / 2.0f};
+    roomba_def.linearDamping = 2.0f;
+    roomba_def.angularDamping = 2.0f;
+    env->roomba_body_id = b2CreateBody(env->world_id, &roomba_def);
+
+    b2Circle roomba_circle;
+    roomba_circle.center = (b2Vec2){0, 0};
+    roomba_circle.radius = INNER_ROOMBA_RADIUS;
+
+    b2ShapeDef roomba_shape_def = b2DefaultShapeDef();
+    roomba_shape_def.density = 1.0f;
+    b2CreateCircleShape(env->roomba_body_id, &roomba_shape_def, &roomba_circle);
 
     // Reset roomba to center of room with random orientation
     b2Vec2 center_pos = {env->room_width / 2.0f, env->room_height / 2.0f};
