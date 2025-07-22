@@ -10,9 +10,9 @@ dt = 0.05
 class Roomba(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128,
                  max_steps=1000, buf=None, seed=0):
-        # Observation space: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
+        # Observation space: [left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped]
         # Unified bumper: physical bumper forces to 1.0, otherwise uses light bumper strength (0.0-1.0)
-        # Memory values: decaying maximum of unified bumper readings (0.0-1.0)
+        # Ramped: follows the bumper data slowly
         self.single_observation_space = gymnasium.spaces.Box(
             low=np.array([0.0, 0.0, 0.0, 0.0]),
             high=np.array([1.0, 1.0, 1.0, 1.0]),

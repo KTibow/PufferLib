@@ -45,7 +45,7 @@ typedef struct {
 
 typedef struct {
     Log log;                     // Required field
-    float* observations;         // Required field. 4D: [left_bumper_strength, right_bumper_strength, left_bumper_memory, right_bumper_memory]
+    float* observations;         // Required field. 4D: [left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped]
     float* actions;              // Required field. 2D: [left_wheel_speed, right_wheel_speed] in cm/s
     float* rewards;              // Required field
     unsigned char* terminals;    // Required field
@@ -70,8 +70,8 @@ typedef struct {
     int right_bumper;            // 1 if right bumper pressed, 0 otherwise
     float left_bumper_strength;  // Unified current strength: physical_bumper ? 1.0 : light_strength
     float right_bumper_strength; // Unified current strength: physical_bumper ? 1.0 : light_strength
-    float left_bumper_memory;    // Unified decaying memory: max(current_unified_strength, previous-dt)
-    float right_bumper_memory;   // Unified decaying memory: max(current_unified_strength, previous-dt)
+    float left_bumper_ramped;    // Follows strength with max change of dt/5 per step (slow up and slow down)
+    float right_bumper_ramped;   // Follows strength with max change of dt/5 per step (slow up and slow down)
 
     // Light bumper sensors (6 discrete sensors at specific angles)
     // Angles relative to front of robot: Left (-39.6°), Front Left (-18°), Center Left (-6°),
@@ -197,11 +197,11 @@ float calculate_light_bumper_strength(float distance) {
     if (distance > 10.0f) {
         return 0.0f;  // No detection beyond 10cm
     } else if (distance > 2.0f) {
-        // Linear rise from 0 to 0.5 between 10cm and 2cm
-        return (10.0f - distance) / 8.0f * 0.5f;  // (10-2) = 8cm range
+        // Linear rise from 0 to 0.8 between 10cm and 2cm
+        return (10.0f - distance) / 8.0f * 0.8f;  // (10-2) = 8cm range
     } else {
-        // Linear fall from 0.5 to 0 between 2cm and 0cm
-        return distance / 2.0f * 0.5f;
+        // Linear fall from 0.8 to 0 between 2cm and 0cm
+        return distance / 2.0f * 0.8f;
     }
 }
 
@@ -341,8 +341,8 @@ void c_reset(Roomba* env) {
     env->right_bumper = 0;
     env->left_bumper_strength = 0.0f;
     env->right_bumper_strength = 0.0f;
-    env->left_bumper_memory = 0.0f;
-    env->right_bumper_memory = 0.0f;
+    env->left_bumper_ramped = 0.0f;
+    env->right_bumper_ramped = 0.0f;
     for (int i = 0; i < 6; i++) {
         env->light_bumper_distances[i] = 100.0f;  // Initialize to large distance
     }
@@ -357,11 +357,11 @@ void c_reset(Roomba* env) {
     // Spawn new dirt pieces
     spawn_dirt(env);
 
-    // Set initial observations: [left_bumper_strength, right_bumper_strength, left_bumper_memory, right_bumper_memory]
+    // Set initial observations: [left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped]
     env->observations[0] = env->left_bumper_strength;
     env->observations[1] = env->right_bumper_strength;
-    env->observations[2] = env->left_bumper_memory;
-    env->observations[3] = env->right_bumper_memory;
+    env->observations[2] = env->left_bumper_ramped;
+    env->observations[3] = env->right_bumper_ramped;
 }
 
 void c_step(Roomba* env) {
@@ -373,8 +373,6 @@ void c_step(Roomba* env) {
     env->right_light_bumper_strength = 0.0f;
     env->left_bumper_strength = 0.0f;
     env->right_bumper_strength = 0.0f;
-    env->left_bumper_memory = fmaxf(0.0f, env->left_bumper_memory - dt/3.0f); // Decay
-    env->right_bumper_memory = fmaxf(0.0f, env->right_bumper_memory - dt/3.0f); // Decay
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0;
 
@@ -465,9 +463,13 @@ void c_step(Roomba* env) {
     env->left_bumper_strength = env->left_bumper ? 1.0f : env->left_light_bumper_strength;
     env->right_bumper_strength = env->right_bumper ? 1.0f : env->right_light_bumper_strength;
 
-    // Update unified bumper memory: take maximum of current unified strength or existing memory
-    env->left_bumper_memory = fmaxf(env->left_bumper_memory, env->left_bumper_strength);
-    env->right_bumper_memory = fmaxf(env->right_bumper_memory, env->right_bumper_strength);
+    // Update ramped memory: follows strength with max change of dt/5 per step
+    float max_change = dt / 4.0f;
+    float left_diff = env->left_bumper_strength - env->left_bumper_ramped;
+    float right_diff = env->right_bumper_strength - env->right_bumper_ramped;
+
+    env->left_bumper_ramped += fmaxf(-max_change, fminf(max_change, left_diff));
+    env->right_bumper_ramped += fmaxf(-max_change, fminf(max_change, right_diff));
 
     // Reward forward movement only
     b2Vec2 actual_velocity = b2Body_GetLinearVelocity(env->roomba_body_id);
@@ -488,11 +490,11 @@ void c_step(Roomba* env) {
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];
 
-    // Update observations: [left_bumper_strength, right_bumper_strength, left_bumper_memory, right_bumper_memory]
+    // Update observations: [left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped]
     env->observations[0] = env->left_bumper_strength;
     env->observations[1] = env->right_bumper_strength;
-    env->observations[2] = env->left_bumper_memory;
-    env->observations[3] = env->right_bumper_memory;
+    env->observations[2] = env->left_bumper_ramped;
+    env->observations[3] = env->right_bumper_ramped;
 
     // Check for episode termination
     if (env->tick >= env->max_steps) {
@@ -627,12 +629,13 @@ void c_render(Roomba* env) {
     // Draw sensor information text
     char sensor_text[300];
     snprintf(sensor_text, sizeof(sensor_text),
-        "%.2f/%.2f | %.0f,%.0f going %.0f/%.0f facing %.0f | %.2f,%.2f | Dirt: %d/%d",
-        env->rewards[0], env->episode_return,
+        "%.0f,%.0f to %.0f/%.0f @ %.0f | %.2f,%.2f %.2f,%.2f | %d/%d dirt | %.2f/%.2f reward",
         transform.p.x, transform.p.y, env->left_wheel_speed, env->right_wheel_speed,
         fmodf(roomba_angle * 180.0f / PI, 360.0f),
         env->left_bumper_strength, env->right_bumper_strength,
-        env->dirt_collected_this_episode, MAX_DIRT_PIECES);
+        env->left_bumper_ramped, env->right_bumper_ramped,
+        env->dirt_collected_this_episode, MAX_DIRT_PIECES,
+        env->rewards[0], env->episode_return);
     DrawText(sensor_text, 10, 10, 20, (Color){241, 241, 241, 255});
 
     EndDrawing();

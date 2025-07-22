@@ -17,7 +17,7 @@ actual_dt = dt / speed_factor
 class RoombaNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Linear(4, 128), nn.GELU())  # 4 inputs: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
+        self.encoder = nn.Sequential(nn.Linear(4, 128), nn.GELU())  # 4 inputs: [left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped]
         self.decoder_mean = nn.Linear(128, 2)  # 128 hidden -> 2 wheel speeds
         self.decoder_logstd = nn.Parameter(torch.zeros(1, 2))
         self.value = nn.Linear(128, 1)  # Value function (not used for inference)
@@ -38,7 +38,11 @@ def calculate_light_bumper_strength(raw_value):
     """Scale raw sensor value (0-4095) to light bumper strength.
     Scale 0-1000 range to 0-0.5 and clamp at 0.5 max.
     """
-    return min(0.5, raw_value / 1000.0 * 0.5)
+    raw_value = raw_value / 1000.0 * 0.8
+    raw_value -= 0.012 # TODO (bitter): make this in the training environment instead
+    raw_value = max(raw_value, 0)
+    raw_value = min(raw_value, 0.8)
+    return raw_value
 
 def read_sensors(roomba):
     """Read bumper sensors (packet 7) and analog light bumper sensors (packets 46-51)
@@ -87,7 +91,7 @@ def main():
     # Load trained model
     print("Loading model...")
     net = RoombaNet()
-    state_dict = torch.load("puffer_roomba_EX-146.pt", map_location="cpu")
+    state_dict = torch.load("puffer_roomba_EX-155.pt", map_location="cpu")
     net.load_state_dict(state_dict)
     net.eval()
 
@@ -104,29 +108,29 @@ def main():
     print("Running neural network control... Press Ctrl+C to stop")
     # roomba.write(OPCODE_MOTORS + bytes([0b00000110]))
 
-    # Initialize unified bumper values and memory (matching simulation format)
-    left_bumper = 0.0  # Current unified bumper value (1.0 for physical bump, 0.0-0.5 for light bumper)
-    right_bumper = 0.0  # Current unified bumper value
-    left_bumper_memory = 0.0  # Decaying memory of left bumper hits
-    right_bumper_memory = 0.0  # Decaying memory of right bumper hits
+    # Initialize unified bumper values and ramped memory (matching simulation format)
+    left_bumper_strength = 0.0  # Current unified bumper value (1.0 for physical bump, 0.0-0.5 for light bumper)
+    right_bumper_strength = 0.0  # Current unified bumper value
+    left_bumper_ramped = 0.0  # Ramped memory that follows strength with limited change rate
+    right_bumper_ramped = 0.0  # Ramped memory that follows strength with limited change rate
 
     try:
         step = 0
         while True:
             start_time = time.time()
             # Read unified bumper sensors (combines physical bumper + light bumper)
-            left_bumper, right_bumper = read_sensors(roomba)
+            left_bumper_strength, right_bumper_strength = read_sensors(roomba)
 
-            # Update memory with unified logic: take maximum of current unified bumper value or existing memory
-            left_bumper_memory = max(left_bumper_memory, left_bumper)
-            right_bumper_memory = max(right_bumper_memory, right_bumper)
+            # Update ramped memory: follows strength (matching simulation)
+            max_change = dt / 4.0
+            left_diff = left_bumper_strength - left_bumper_ramped
+            right_diff = right_bumper_strength - right_bumper_ramped
 
-            # Decay memory values by subtracting timestep/3 for 3 second decay (minimum 0.0)
-            left_bumper_memory = max(0.0, left_bumper_memory - dt/3)
-            right_bumper_memory = max(0.0, right_bumper_memory - dt/3)
+            left_bumper_ramped += max(-max_change, min(max_change, left_diff))
+            right_bumper_ramped += max(-max_change, min(max_change, right_diff))
 
-            # Create observation array matching simulation format: [left_bumper, right_bumper, left_bumper_memory, right_bumper_memory]
-            obs = np.array([left_bumper, right_bumper, left_bumper_memory, right_bumper_memory], dtype=np.float32)
+            # Create observation array matching simulation format: [left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped]
+            obs = np.array([left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped], dtype=np.float32)
 
             # Run neural network
             with torch.no_grad():
@@ -146,7 +150,7 @@ def main():
 
             processing_time = time.time() - start_time
             # Calculate actual timestep duration (extended by 1/speed_factor to maintain distance)
-            print(f"Step {step:03d} ({processing_time:.3f}s): unified_bumpers {left_bumper:.3f},{right_bumper:.3f} memory {left_bumper_memory:.3f},{right_bumper_memory:.3f} -> actions={actions} speeds=({left_speed:.0f}, {right_speed:.0f}) mm/s [factor={speed_factor}]")
+            print(f"Step {step:03d} ({processing_time:.3f}s): strength {left_bumper_strength:.3f},{right_bumper_strength:.3f} ramped {left_bumper_ramped:.3f},{right_bumper_ramped:.3f} -> actions={actions} speeds=({left_speed:.0f}, {right_speed:.0f}) mm/s [factor={speed_factor}]")
             if processing_time < actual_dt:
                 time.sleep(actual_dt - processing_time)
             step += 1
