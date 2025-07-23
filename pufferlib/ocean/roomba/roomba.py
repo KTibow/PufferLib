@@ -10,13 +10,13 @@ dt = 0.05
 class Roomba(pufferlib.PufferEnv):
     def __init__(self, num_envs=1, render_mode=None, log_interval=128,
                  max_steps=1000, buf=None, seed=0):
-        # Observation space: [left_bumper_strength, right_bumper_strength, left_bumper_ramped, right_bumper_ramped]
-        # Unified bumper: physical bumper forces to 1.0, otherwise uses light bumper strength (0.0-1.0)
-        # Ramped: follows the bumper data slowly
+        # Observation space: [light_bumper_0, light_bumper_1, light_bumper_2, light_bumper_3, light_bumper_4, light_bumper_5, left_bumper_binary, right_bumper_binary]
+        # Light bumpers: normalized 0-1 values from 6 discrete IR sensors
+        # Binary bumpers: decaying bumper data
         self.single_observation_space = gymnasium.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 0.0]),
-            high=np.array([1.0, 1.0, 1.0, 1.0]),
-            shape=(4,), dtype=np.float32)
+            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            shape=(8,), dtype=np.float32)
 
         # Action space: [left_wheel_speed, right_wheel_speed] normalized to [-1, 1]
         # Will be scaled in the C environment
