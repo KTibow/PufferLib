@@ -18,7 +18,7 @@ const int CELL_VISITED = 1;
 #define GRID_WIDTH 8
 #define GRID_HEIGHT 6
 #define GRID_CELLS (GRID_WIDTH * GRID_HEIGHT)
-const int MAX_STEPS = GRID_CELLS;
+const int MAX_STEPS = GRID_CELLS - 2;
 
 typedef struct {
     float coverage_percentage;
@@ -152,6 +152,8 @@ void c_step(CoverageGrid* env) {
         // Wall collision - no movement, penalty
         env->wall_collisions++;
         env->rewards[0] -= 0.1f;
+        // printf("Wall collision at (%d, %d) in direction %d (trying to move to (%d, %d))\n",
+        //                env->x, env->y, env->direction, new_x, new_y);
     }
 
     // Accumulate episode return
