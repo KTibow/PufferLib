@@ -154,6 +154,7 @@ MAKE_FUNCTIONS = {
     'pacman': 'Pacman',
     'checkers': 'Checkers',
     'asteroids': 'Asteroids',
+    'coverage_grid': 'CoverageGrid',
     'spaces': make_spaces,
     'multiagent': make_multiagent,
 }
