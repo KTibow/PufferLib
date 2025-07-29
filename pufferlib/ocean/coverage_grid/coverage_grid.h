@@ -16,7 +16,7 @@ const int CELL_UNVISITED = 0;
 const int CELL_VISITED = 1;
 
 #define GRID_WIDTH 8
-#define GRID_HEIGHT 6
+#define GRID_HEIGHT 8
 #define GRID_CELLS (GRID_WIDTH * GRID_HEIGHT)
 const int MAX_STEPS = GRID_CELLS - 2;
 
@@ -60,12 +60,14 @@ void add_log(CoverageGrid* env) {
 void update_observations(CoverageGrid* env) {
     env->observations[0] = env->y == 0 ? 1.0f : 0.0f;
     env->observations[1] = env->y == GRID_HEIGHT - 1 ? 1.0f : 0.0f;
+    env->observations[2] = env->x == 0 ? 1.0f : 0.0f;
+    env->observations[3] = env->x == GRID_WIDTH - 1 ? 1.0f : 0.0f;
 }
 
 void c_reset(CoverageGrid* env) {
     // Reset location
     env->x = 0;
-    env->y = 1;
+    env->y = 0;
     env->direction = DIRECTION_SOUTH;
     env->tick = 0;
     env->wall_collisions = 0;

@@ -8,7 +8,7 @@ class CoverageGrid(pufferlib.PufferEnv):
                 render_mode=None,
                 buf=None, seed=0):
         self.single_observation_space = gymnasium.spaces.Box(
-            low=0.0, high=1.0, shape=(2,), dtype=np.float32)
+            low=0.0, high=1.0, shape=(4,), dtype=np.float32)
         # Action space: GO_FORWARD, GO_LEFT, GO_RIGHT
         self.single_action_space = gymnasium.spaces.Discrete(3)
         self.render_mode = render_mode
