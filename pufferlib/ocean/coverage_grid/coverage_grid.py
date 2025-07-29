@@ -5,14 +5,13 @@ from pufferlib.ocean.coverage_grid import binding
 
 class CoverageGrid(pufferlib.PufferEnv):
     def __init__(self, num_envs=1,
-                render_mode=None, log_interval=128,
+                render_mode=None,
                 buf=None, seed=0):
         self.single_observation_space = gymnasium.spaces.Box(
             low=0.0, high=1.0, shape=(2,), dtype=np.float32)
         # Action space: GO_FORWARD, GO_LEFT, GO_RIGHT
         self.single_action_space = gymnasium.spaces.Discrete(3)
         self.render_mode = render_mode
-        self.log_interval = log_interval
         self.num_agents = num_envs
 
         super().__init__(buf)
@@ -32,7 +31,7 @@ class CoverageGrid(pufferlib.PufferEnv):
         binding.vec_step(self.c_envs)
 
         info = []
-        if self.tick % self.log_interval == 0:
+        if self.terminals.any():
             info.append(binding.vec_log(self.c_envs))
 
         return (self.observations, self.rewards,
