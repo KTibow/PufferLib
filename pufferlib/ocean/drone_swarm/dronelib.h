@@ -43,7 +43,7 @@
 #define MARGIN_Y (GRID_Y - 1)
 #define MARGIN_Z (GRID_Z - 1)
 #define V_TARGET 0.05f
-#define DT 0.02f
+#define DT 0.05f
 #define DT_RNG 0.0f
 
 // Corner to corner distance
@@ -375,6 +375,7 @@ void move_drone(Drone* drone, float* actions) {
     float dt = DT * rndf(1.0f - DT_RNG, 1.0 + DT_RNG);
 
     // update drone state
+    drone->prev_pos = drone->pos;
     explicit_euler(drone, v_dot, q_dot, w_dot, rpm_dot, dt);
 
     // clamp and normalise for observations

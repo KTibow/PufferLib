@@ -155,10 +155,10 @@ void compute_observations(DroneSwarm *env) {
         env->observations[idx++] = agent->quat.y;
         env->observations[idx++] = agent->quat.z;
 
-	env->observations[idx++] = agent->rpms[0] / agent->max_rpm;
-	env->observations[idx++] = agent->rpms[1] / agent->max_rpm;
-	env->observations[idx++] = agent->rpms[2] / agent->max_rpm;
-	env->observations[idx++] = agent->rpms[3] / agent->max_rpm;
+        env->observations[idx++] = agent->rpms[0] / agent->max_rpm;
+        env->observations[idx++] = agent->rpms[1] / agent->max_rpm;
+        env->observations[idx++] = agent->rpms[2] / agent->max_rpm;
+        env->observations[idx++] = agent->rpms[3] / agent->max_rpm;
 
         env->observations[idx++] = agent->pos.x / GRID_X;
         env->observations[idx++] = agent->pos.y / GRID_Y;
@@ -290,7 +290,8 @@ void set_target_congo(DroneSwarm* env, int idx) {
     lead->target_pos = follow->target_pos;
     lead->target_vel = follow->target_vel;
 
-    for (int i = 0; i < 20; i++) {
+    // TODO: Slow hack
+    for (int i = 0; i < 40; i++) {
         move_target(env, lead);
     }
 }
@@ -331,7 +332,7 @@ void set_target(DroneSwarm* env, int idx) {
     }
 }
 
-float compute_reward(DroneSwarm* env, Drone *agent) {
+float compute_reward(DroneSwarm* env, Drone *agent, bool collision) {
     // Distance reward
     float dx = (agent->pos.x - agent->target_pos.x);
     float dy = (agent->pos.y - agent->target_pos.y);
@@ -342,8 +343,8 @@ float compute_reward(DroneSwarm* env, Drone *agent) {
     //float dist_reward = 1.0f - dist;
 
     // Density penalty
-    float density_reward = 1.0f;
-    if (env->num_agents > 1) {
+    float density_reward = 0.0f;
+    if (collision && env->num_agents > 1) {
         Drone *nearest = nearest_drone(env, agent);
         dx = agent->pos.x - nearest->pos.x;
         dy = agent->pos.y - nearest->pos.y;
@@ -355,7 +356,7 @@ float compute_reward(DroneSwarm* env, Drone *agent) {
         }
     }
 
-    float abs_reward = dist_reward * density_reward;
+    float abs_reward = dist_reward + density_reward;
 
     // Prevent negative dist and density from making a positive reward
     if (dist_reward < 0.0f && density_reward < 0.0f) {
@@ -368,7 +369,6 @@ float compute_reward(DroneSwarm* env, Drone *agent) {
     agent->last_target_reward = dist_reward;
     agent->last_abs_reward = abs_reward;
 
-    agent->episode_return += delta_reward;
     agent->episode_length++;
     agent->score += abs_reward;
 
@@ -387,26 +387,29 @@ void reset_agent(DroneSwarm* env, Drone *agent, int idx) {
     agent->quat = (Quat){1.0f, 0.0f, 0.0f, 0.0f};
     agent->ring_idx = 0;
 
-    float size = 0.2f;
-    init_drone(agent, size, 0.0f);
-    //float size = rndf(0.1f, 0.4);
-    //init_drone(agent, size, 0.1f);
-    compute_reward(env, agent);
+    //float size = 0.2f;
+    //init_drone(agent, size, 0.0f);
+    float size = rndf(0.1f, 0.4);
+    init_drone(agent, size, 0.1f);
+    compute_reward(env, agent, env->task != TASK_RACE);
 }
 
 void c_reset(DroneSwarm *env) {
     env->tick = 0;
-    env->task = TASK_RACE;
     //env->task = rand() % (TASK_N - 1);
     //env->task = TASK_FLAG;
+    env->task = TASK_CONGO;
     //env->task = rand() % (TASK_N - 1);
     /*
-    if (rand() % 2) {
-        env->task = rand() % (TASK_N - 1);
-    } else {
+    if (rand() % 4) {
         env->task = TASK_RACE;
+    } else {
+        env->task = rand() % (TASK_N - 1);
     }
     */
+    //env->task = TASK_RACE;
+    //env->task = TASK_HOVER;
+    //env->task = TASK_FLAG;
 
     for (int i = 0; i < env->num_agents; i++) {
         Drone *agent = &env->agents[i];
@@ -462,16 +465,20 @@ void c_step(DroneSwarm *env) {
         float reward = 0.0f;
         if (env->task == TASK_RACE) {
             Ring *ring = &env->ring_buffer[agent->ring_idx];
-            compute_reward(env, agent);
-            reward = check_ring(agent, ring);
-            if (reward > 0) {
+            reward = compute_reward(env, agent, true);
+            float passed_ring = check_ring(agent, ring);
+            if (passed_ring > 0) {
                 agent->ring_idx = (agent->ring_idx + 1) % env->max_rings;
                 env->log.rings_passed += 1.0f;
+                set_target(env, i);
+                compute_reward(env, agent, true);
             }
+            reward += passed_ring;
         } else {
             // Delta reward
-            reward = compute_reward(env, agent);
+            reward = compute_reward(env, agent, true);
         }
+
         env->rewards[i] += reward;
         agent->episode_return += reward;
 
@@ -483,10 +490,6 @@ void c_step(DroneSwarm *env) {
         } else if (env->tick >= HORIZON - 1) {
             env->terminals[i] = 1;
             add_log(env, i, false);
-        }
-
-        if (env->task == TASK_RACE) {
-            set_target(env, i);
         }
     }
     if (env->tick >= HORIZON - 1) {
