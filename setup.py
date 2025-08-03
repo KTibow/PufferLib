@@ -153,7 +153,7 @@ if not NO_OCEAN:
 # - <= 0.20 is missing dict methods for gym.spaces.Dict
 # - 0.18-0.21 require setuptools<=65.5.0
 
-# Extensions 
+# Extensions
 class BuildExt(build_ext):
     def run(self):
         # Propagate any build_ext options (e.g., --inplace, --force) to subcommands
@@ -276,16 +276,6 @@ setup(
     },
     include_package_data=True,
     install_requires=install_requires,
-<<<<<<< HEAD
-    extras_require={
-        'docs': docs,
-        'ray': ray,
-        'cleanrl': cleanrl,
-        # 'common': common,
-        # **environments,
-    },
-=======
->>>>>>> upstream/3.0
     ext_modules = c_extensions + torch_extensions,
     cmdclass={
         "build_ext": BuildExt,
@@ -294,14 +284,3 @@ setup(
     },
     include_dirs=[numpy.get_include(), RAYLIB_NAME + '/include'],
 )
-<<<<<<< HEAD
-#stable_baselines3
-#supersuit==3.3.5
-#'git+https://github.com/oxwhirl/smac.git',
-
-#curl -L -o smac.zip https://blzdistsc2-a.akamaihd.net/Linux/SC2.4.10.zip
-#unzip -P iagreetotheeula smac.zip
-#curl -L -o maps.zip https://github.com/oxwhirl/smac/releases/download/v0.1-beta1/SMAC_Maps.zip
-#unzip maps.zip && mv SMAC_Maps/ StarCraftII/Maps/
-=======
->>>>>>> upstream/3.0
