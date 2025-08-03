@@ -8,15 +8,16 @@ from pufferlib.ocean.roomba import binding
 
 dt = 0.05
 class Roomba(pufferlib.PufferEnv):
-    def __init__(self, num_envs=1, render_mode=None, log_interval=128,
+    def __init__(self, num_envs=1, render_mode=None,
                  max_steps=1000, buf=None, seed=0):
-        # Observation space: [light_bumper_0, light_bumper_1, light_bumper_2, light_bumper_3, light_bumper_4, light_bumper_5, left_bumper_binary, right_bumper_binary]
-        # Light bumpers: normalized 0-1 values from 6 discrete IR sensors
-        # Binary bumpers: decaying bumper data
+        # Observation space: [distance_to_left_wall, distance_to_right_wall, distance_to_top_wall, distance_to_bottom_wall, forward_distance, absolute_angle]
+        # Wall distances: normalized distances in cm (0 = at wall, 1 = far from wall)
+        # Forward distance: normalized distance to wall if moving straight ahead
+        # Absolute angle: normalized to [-1, 1] representing [-π, π]
         self.single_observation_space = gymnasium.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
-            shape=(8,), dtype=np.float32)
+            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, -1.0]),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            shape=(6,), dtype=np.float32)
 
         # Action space: [left_wheel_speed, right_wheel_speed] normalized to [-1, 1]
         # Will be scaled in the C environment
@@ -25,7 +26,6 @@ class Roomba(pufferlib.PufferEnv):
 
         self.render_mode = render_mode
         self.num_agents = num_envs
-        self.log_interval = log_interval
         self.max_steps = max_steps
 
         super().__init__(buf)
@@ -40,13 +40,13 @@ class Roomba(pufferlib.PufferEnv):
         return self.observations, []
 
     def step(self, actions):
-        self.tick += 1
-
         self.actions[:] = actions
+
+        self.tick += 1
         binding.vec_step(self.c_envs)
 
         info = []
-        if self.tick % self.log_interval == 0:
+        if self.terminals.any():
             info.append(binding.vec_log(self.c_envs))
 
         return (self.observations, self.rewards,
@@ -57,22 +57,3 @@ class Roomba(pufferlib.PufferEnv):
 
     def close(self):
         binding.vec_close(self.c_envs)
-
-if __name__ == '__main__':
-    # Simple test of the environment
-    N = 1
-    env = Roomba(num_envs=N, max_steps=500)
-    env.reset()
-    steps = 0
-
-    # Cache some random actions for testing (normalized [-1, 1])
-    CACHE = 1024
-    actions = np.random.uniform(-1, 1, (CACHE, N, 2))
-
-    import time
-    start = time.time()
-    while time.time() - start < 10:
-        env.step(actions[steps % CACHE])
-        steps += 1
-
-    print('Roomba SPS:', int(env.num_agents * steps / (time.time() - start)))

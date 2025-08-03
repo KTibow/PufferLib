@@ -44,7 +44,7 @@ typedef struct {
 
 typedef struct {
     Log log;                     // Required field
-    float* observations;         // Required field. 8D: [light_bumper_0, light_bumper_1, light_bumper_2, light_bumper_3, light_bumper_4, light_bumper_5, left_bumper_binary, right_bumper_binary]
+    float* observations;         // Required field. 6D: [distance_to_left_wall, distance_to_right_wall, distance_to_top_wall, distance_to_bottom_wall, forward_distance, absolute_angle]
     float* actions;              // Required field. 2D: [left_wheel_speed, right_wheel_speed] in cm/s
     float* rewards;              // Required field
     unsigned char* terminals;    // Required field
@@ -65,13 +65,13 @@ typedef struct {
     float episode_return;        // Accumulated episode return
 
     // Sensors
-    float left_bumper_data;      // Decays
-    float right_bumper_data;     // Decays
+    // float left_bumper_data;      // Decays
+    // float right_bumper_data;     // Decays
 
     // Light bumper sensors (6 discrete sensors at specific angles)
     // Angles relative to front of robot: Left (-39.6°), Front Left (-18°), Center Left (-6°),
     // Center Right (15°), Front Right (30.5°), Right (64°)
-    float light_bumper_distances[6];  // Distance to closest wall for each sensor in cm
+    // float light_bumper_distances[6];  // Distance to closest wall for each sensor in cm
 
     // Dirt system
     Dirt dirt_pieces[MAX_DIRT_PIECES];
@@ -196,17 +196,39 @@ float calculate_light_bumper_strength(float distance) {
     }
 }
 
-float calculate_normalized_light_bumper(float distance) {
-    // Normalize to 0-1 range where 1.0 = close contact, 0.0 = no detection
-    if (distance > 10.0f) {
-        return 0.0f;  // No detection beyond 10cm
-    } else if (distance > 2.0f) {
-        // Linear from 0 to 0.8 between 10cm and 2cm
-        return (10.0f - distance) / 8.0f * 0.8f;
-    } else {
-        // Linear from 0.8 to 1.0 between 2cm and 0cm (very close contact)
-        return 0.8f + (2.0f - distance) / 2.0f * 0.2f;
+float calculate_normalized_wall_distance(float distance, float max_distance) {
+    // Normalize to 0-1 range where 0.0 = at wall, 1.0 = far from wall
+    if (distance >= max_distance) {
+        return 1.0f;
     }
+    return distance / max_distance;
+}
+
+void calculate_wall_distances(Roomba* env, float* distances) {
+    // Get current roomba position
+    b2Vec2 pos = b2Body_GetPosition(env->roomba_body_id);
+
+    // Calculate distances to each wall (accounting for roomba radius)
+    distances[0] = pos.x - ROOMBA_RADIUS; // distance to left wall (x = 0)
+    distances[1] = (env->room_width - pos.x) - ROOMBA_RADIUS; // distance to right wall
+    distances[2] = (env->room_height - pos.y) - ROOMBA_RADIUS; // distance to top wall
+    distances[3] = pos.y - ROOMBA_RADIUS; // distance to bottom wall (y = 0)
+
+    // Ensure distances are not negative
+    for (int i = 0; i < 4; i++) {
+        if (distances[i] < 0.0f) distances[i] = 0.0f;
+    }
+}
+
+float calculate_forward_distance(Roomba* env) {
+    // Get current roomba position and orientation
+    b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
+    float current_angle = b2Rot_GetAngle(transform.q);
+
+    // Use ray casting to find distance to wall in forward direction
+    return box2d_ray_cast_distance(env->world_id,
+                                 transform.p.x, transform.p.y,
+                                 cosf(current_angle), sinf(current_angle));
 }
 
 // Helper function to check for physics collisions (for penalties)
@@ -226,44 +248,44 @@ int has_physics_collision(b2BodyId body_id) {
     return 0;
 }
 
-void update_soft_bumpers(Roomba* env) {
-    // Decay bumpers
-    env->left_bumper_data = fmaxf(env->left_bumper_data - dt, 0);
-    env->right_bumper_data = fmaxf(env->right_bumper_data - dt, 0);
+// void update_soft_bumpers(Roomba* env) {
+//     // Decay bumpers
+//     // env->left_bumper_data = fmaxf(env->left_bumper_data - dt, 0);
+//     // env->right_bumper_data = fmaxf(env->right_bumper_data - dt, 0);
 
-    // Get current robot position and orientation
-    b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
-    float robotAngle = b2Rot_GetAngle(transform.q);
+//     // Get current robot position and orientation
+//     b2Transform transform = b2Body_GetTransform(env->roomba_body_id);
+//     float robotAngle = b2Rot_GetAngle(transform.q);
 
-    float quarterCircle = PI/2;
-    float bumperSize = ROOMBA_RADIUS - INNER_ROOMBA_RADIUS;
+//     float quarterCircle = PI/2;
+//     float bumperSize = ROOMBA_RADIUS - INNER_ROOMBA_RADIUS;
 
-    // Check left side
-    for (float rayAngle = robotAngle; rayAngle < robotAngle + quarterCircle; rayAngle += PI/36) {
-        float distance = box2d_ray_cast_distance(env->world_id,
-            transform.p.x, transform.p.y,
-            cosf(rayAngle), sinf(rayAngle)
-        );
+//     // Check left side
+//     for (float rayAngle = robotAngle; rayAngle < robotAngle + quarterCircle; rayAngle += PI/36) {
+//         float distance = box2d_ray_cast_distance(env->world_id,
+//             transform.p.x, transform.p.y,
+//             cosf(rayAngle), sinf(rayAngle)
+//         );
 
-        if (distance <= bumperSize) {
-            env->left_bumper_data = 1;
-            break;
-        }
-    }
+//         if (distance <= bumperSize) {
+//             env->left_bumper_data = 1;
+//             break;
+//         }
+//     }
 
-    // Check right side
-    for (float rayAngle = robotAngle; rayAngle > robotAngle - quarterCircle; rayAngle -= PI/36) {
-        float distance = box2d_ray_cast_distance(env->world_id,
-            transform.p.x, transform.p.y,
-            cosf(rayAngle), sinf(rayAngle)
-        );
+//     // Check right side
+//     for (float rayAngle = robotAngle; rayAngle > robotAngle - quarterCircle; rayAngle -= PI/36) {
+//         float distance = box2d_ray_cast_distance(env->world_id,
+//             transform.p.x, transform.p.y,
+//             cosf(rayAngle), sinf(rayAngle)
+//         );
 
-        if (distance <= bumperSize) {
-            env->right_bumper_data = 1;
-            break;
-        }
-    }
-}
+//         if (distance <= bumperSize) {
+//             env->right_bumper_data = 1;
+//             break;
+//         }
+//     }
+// }
 
 void add_log(Roomba* env) {
     env->log.episode_length += env->tick;
@@ -326,8 +348,8 @@ void c_reset(Roomba* env) {
     b2CreateCircleShape(env->roomba_body_id, &roomba_shape_def, &roomba_circle);
 
     // Reset roomba to center of room with random orientation
-    b2Vec2 center_pos = {env->room_width / 2.0f, env->room_height / 2.0f};
-    float random_angle = (float)(rand()) / RAND_MAX * 2.0f * PI;
+    b2Vec2 center_pos = {20.0f, 20.0f};
+    float random_angle = 0.0f;
 
     b2Body_SetTransform(env->roomba_body_id, center_pos, b2MakeRot(random_angle));
     b2Body_SetLinearVelocity(env->roomba_body_id, (b2Vec2){0, 0});
@@ -337,11 +359,11 @@ void c_reset(Roomba* env) {
     env->right_wheel_speed = 0.0f;
     env->tick = 0;
     env->episode_return = 0.0f;
-    env->left_bumper_data = 0;
-    env->right_bumper_data = 0;
-    for (int i = 0; i < 6; i++) {
-        env->light_bumper_distances[i] = 100.0f;  // Initialize to large distance
-    }
+    // env->left_bumper_data = 0;
+    // env->right_bumper_data = 0;
+    // for (int i = 0; i < 6; i++) {
+    //     env->light_bumper_distances[i] = 100.0f;  // Initialize to large distance
+    // }
     env->dirt_collected_this_episode = 0;
 
     // Reset history tracking
@@ -351,39 +373,53 @@ void c_reset(Roomba* env) {
     // Spawn new dirt pieces
     spawn_dirt(env);
 
-    // Set initial observations: [light_bumper_0, light_bumper_1, light_bumper_2, light_bumper_3, light_bumper_4, light_bumper_5, left_bumper_data, right_bumper_data]
-    for (int i = 0; i < 6; i++) {
-        env->observations[i] = calculate_normalized_light_bumper(env->light_bumper_distances[i]);
+    // Set initial observations: [distance_to_left_wall, distance_to_right_wall, distance_to_top_wall, distance_to_bottom_wall, forward_distance, absolute_angle]
+    float wall_distances[4];
+    calculate_wall_distances(env, wall_distances);
+
+    // Use different max distances for each wall
+    float max_distances[4] = {
+        env->room_width,   // left wall: max possible distance is room width
+        env->room_width,   // right wall: max possible distance is room width
+        env->room_height,  // top wall: max possible distance is room height
+        env->room_height   // bottom wall: max possible distance is room height
+    };
+    for (int i = 0; i < 4; i++) {
+        env->observations[i] = calculate_normalized_wall_distance(wall_distances[i], max_distances[i]);
     }
-    env->observations[6] = env->left_bumper_data;
-    env->observations[7] = env->right_bumper_data;
+
+    // Add forward distance observation
+    float forward_distance = calculate_forward_distance(env);
+    env->observations[4] = calculate_normalized_wall_distance(forward_distance, fmaxf(env->room_width, env->room_height));
+
+    env->observations[5] = b2Rot_GetAngle(b2Body_GetTransform(env->roomba_body_id).q) / PI;
 }
 
 void c_step(Roomba* env) {
     env->tick += 1;
-    for (int i = 0; i < 6; i++) {
-        env->light_bumper_distances[i] = 100.0f;  // Initialize to large distance
-    }
+    // for (int i = 0; i < 6; i++) {
+    //     env->light_bumper_distances[i] = 100.0f;  // Initialize to large distance
+    // }
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0;
 
     // Apply wheel speed commands
     float target_left = env->actions[0] * MAX_WHEEL_SPEED;
-    if (target_left > -10 && target_left < 10) {
-      target_left = 0.0f;
-    }
-    if (target_left > 0 && env->left_bumper_data > 0.5f) {
-      target_left = 0.0f;
-    }
+    // if (target_left > -10 && target_left < 10) {
+    //   target_left = 0.0f;
+    // }
+    // if (target_left > 0 && env->left_bumper_data > 0.5f) {
+    //   target_left = 0.0f;
+    // }
     env->left_wheel_speed = env->left_wheel_speed * FRICTION + target_left * (1.0f - FRICTION);
 
     float target_right = env->actions[1] * MAX_WHEEL_SPEED;
-    if (target_right > -10 && target_right < 10) {
-      target_right = 0.0f;
-    }
-    if (target_right > 0 && env->right_bumper_data > 0.5f) {
-      target_right = 0.0f;
-    }
+    // if (target_right > -10 && target_right < 10) {
+    //   target_right = 0.0f;
+    // }
+    // if (target_right > 0 && env->right_bumper_data > 0.5f) {
+    //   target_right = 0.0f;
+    // }
     env->right_wheel_speed = env->right_wheel_speed * FRICTION + target_right * (1.0f - FRICTION);
 
     // Convert wheel speeds to linear and angular velocity
@@ -418,27 +454,27 @@ void c_step(Roomba* env) {
     }
 
     // Update soft bumpers using ray casting
-    update_soft_bumpers(env);
+    // update_soft_bumpers(env);
 
     // Check physics body contacts for collision penalties
     int physics_collision = has_physics_collision(env->roomba_body_id);
 
     // Light bumper detection: 6 discrete sensors at specific angles with distance calculation using Box2D ray casting
     // Sensor angles in degrees relative to front of robot
-    float sensor_angles[6] = {39.6f, 18.0f, 6.0f, -15.0f, -30.5f, -64.0f};
+    // float sensor_angles[6] = {39.6f, 18.0f, 6.0f, -15.0f, -30.5f, -64.0f};
 
-    // Get current robot position
-    b2Vec2 pos = b2Body_GetPosition(env->roomba_body_id);
+    // // Get current robot position
+    // b2Vec2 pos = b2Body_GetPosition(env->roomba_body_id);
 
-    for (int i = 0; i < 6; i++) {
-        float sensor_angle = b2Rot_GetAngle(new_transform.q) + sensor_angles[i] * PI / 180.0f;
-        float cos_angle = cosf(sensor_angle);
-        float sin_angle = sinf(sensor_angle);
+    // for (int i = 0; i < 6; i++) {
+    //     float sensor_angle = b2Rot_GetAngle(new_transform.q) + sensor_angles[i] * PI / 180.0f;
+    //     float cos_angle = cosf(sensor_angle);
+    //     float sin_angle = sinf(sensor_angle);
 
-        // Box2D ray cast from robot position outward in sensor direction
-        float distance = box2d_ray_cast_distance(env->world_id, pos.x, pos.y, cos_angle, sin_angle);
-        env->light_bumper_distances[i] = distance;
-    }
+    //     // Box2D ray cast from robot position outward in sensor direction
+    //     float distance = box2d_ray_cast_distance(env->world_id, pos.x, pos.y, cos_angle, sin_angle);
+    //     env->light_bumper_distances[i] = distance;
+    // }
 
 
     // Reward forward movement only
@@ -460,12 +496,27 @@ void c_step(Roomba* env) {
     // Accumulate reward into episode return
     env->episode_return += env->rewards[0];
 
-    // Update observations: [light_bumper_0, light_bumper_1, light_bumper_2, light_bumper_3, light_bumper_4, light_bumper_5, left_bumper_binary, right_bumper_binary]
-    for (int i = 0; i < 6; i++) {
-        env->observations[i] = calculate_normalized_light_bumper(env->light_bumper_distances[i]);
+    // Update observations: [distance_to_left_wall, distance_to_right_wall, distance_to_top_wall, distance_to_bottom_wall, forward_distance, absolute_angle]
+    float wall_distances[4];
+    calculate_wall_distances(env, wall_distances);
+
+    // Use actual room width/height for normalization per wall
+    float max_wall_distances[4] = {
+        env->room_width,   // left wall: max possible distance is room width
+        env->room_width,   // right wall: max possible distance is room width
+        env->room_height,  // top wall: max possible distance is room height
+        env->room_height   // bottom wall: max possible distance is room height
+    };
+    for (int i = 0; i < 4; i++) {
+        env->observations[i] = calculate_normalized_wall_distance(wall_distances[i], max_wall_distances[i]);
     }
-    env->observations[6] = (float)env->left_bumper_data;
-    env->observations[7] = (float)env->right_bumper_data;
+
+    // Add forward distance observation
+    float forward_distance = calculate_forward_distance(env);
+    float max_distance = fmaxf(env->room_width, env->room_height);
+    env->observations[4] = calculate_normalized_wall_distance(forward_distance, max_distance);
+
+    env->observations[5] = b2Rot_GetAngle(new_transform.q) / PI;
 
     // Check for episode termination
     if (env->tick >= env->max_steps) {
@@ -536,17 +587,17 @@ void c_render(Roomba* env) {
     Vector2 roomba_pos = map_to_screen(transform.p.x, transform.p.y, env->room_height, offset_x, offset_y);
     float roomba_radius = ROOMBA_RADIUS * SCALE;
 
-    float bumper_intensity = fmaxf(env->left_bumper_data, env->right_bumper_data);
+    // float bumper_intensity = fmaxf(env->left_bumper_data, env->right_bumper_data);
     Color base_color = {0, 187, 187, 255};
     Color collision_color = {187, 0, 0, 255};
 
-    Color roomba_color = {
-        (unsigned char)(base_color.r + (collision_color.r - base_color.r) * bumper_intensity),
-        (unsigned char)(base_color.g + (collision_color.g - base_color.g) * bumper_intensity),
-        (unsigned char)(base_color.b + (collision_color.b - base_color.b) * bumper_intensity),
-        255
-    };
-    DrawCircle(roomba_pos.x, roomba_pos.y, roomba_radius, roomba_color);
+    // Color roomba_color = {
+    //     (unsigned char)(base_color.r + (collision_color.r - base_color.r) * bumper_intensity),
+    //     (unsigned char)(base_color.g + (collision_color.g - base_color.g) * bumper_intensity),
+    //     (unsigned char)(base_color.b + (collision_color.b - base_color.b) * bumper_intensity),
+    //     255
+    // };
+    DrawCircle(roomba_pos.x, roomba_pos.y, roomba_radius, base_color);
 
     // Draw dirt pieces
     for (int i = 0; i < MAX_DIRT_PIECES; i++) {
