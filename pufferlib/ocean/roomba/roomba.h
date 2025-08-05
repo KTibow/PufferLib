@@ -105,7 +105,7 @@ void c_reset(Roomba* env) {
     float margin = ROOMBA_INNER_RADIUS + 5; // Small margin from wall
     env->x = margin;
     env->y = ROOM_SIZE - margin;
-    env->angle = -M_PI / 2.0f; // Facing up
+    env->angle = M_PI / 2.0f; // Facing down
     env->vx = 0;
     env->vy = 0;
     env->vangle = 0;
@@ -297,15 +297,18 @@ void c_render(Roomba* env) {
     BeginDrawing();
     ClearBackground(BLACK);
 
+    // Helper function to flip Y coordinate
+    #define FLIP_Y(y) (window_size - (y))
+
     // Draw room
     DrawRectangleLines(0, 0, window_size, window_size, WHITE);
 
-    // Draw coverage grid (faint)
+    // Draw coverage grid
     for (int i = 0; i < 30; i++) {
         for (int j = 0; j < 30; j++) {
             if (env->coverage_grid[i][j] > 0) {
                 int x = j * window_size / 30;
-                int y = i * window_size / 30;
+                int y = FLIP_Y((i + 1) * window_size / 30);  // Flip and adjust
                 DrawRectangle(x, y, window_size/30, window_size/30, (Color){0, 100, 0, 50});
             }
         }
@@ -321,67 +324,65 @@ void c_render(Roomba* env) {
 
         DrawLine(
             env->trail[prev].x * PIXEL_SCALE,
-            env->trail[prev].y * PIXEL_SCALE,
+            FLIP_Y(env->trail[prev].y * PIXEL_SCALE),
             env->trail[curr].x * PIXEL_SCALE,
-            env->trail[curr].y * PIXEL_SCALE,
+            FLIP_Y(env->trail[curr].y * PIXEL_SCALE),
             c
         );
     }
 
-    // Draw roomba - inner radius (movement boundary) in dark green
-    DrawCircle(env->x * PIXEL_SCALE, env->y * PIXEL_SCALE,
-               ROOMBA_INNER_RADIUS * PIXEL_SCALE, DARKGREEN);
+    // Draw roomba
+    float screen_x = env->x * PIXEL_SCALE;
+    float screen_y = FLIP_Y(env->y * PIXEL_SCALE);
 
-    // Draw outer radius (bumper zone) as ring
-    DrawCircleLines(env->x * PIXEL_SCALE, env->y * PIXEL_SCALE,
-                    ROOMBA_OUTER_RADIUS * PIXEL_SCALE, GRAY);
+    DrawCircle(screen_x, screen_y, ROOMBA_INNER_RADIUS * PIXEL_SCALE, DARKGREEN);
+    DrawCircleLines(screen_x, screen_y, ROOMBA_OUTER_RADIUS * PIXEL_SCALE, GRAY);
 
     // Highlight bumper zones if active
     if (env->left_bumper || env->right_bumper) {
         Color bumper_color = RED;
         if (env->left_bumper) {
-            // Draw left bumper arc (front-left quadrant)
-            float start_angle = (env->angle) * 180 / M_PI;
-            float end_angle = (env->angle + M_PI/2) * 180 / M_PI;
-            DrawRing((Vector2){env->x * PIXEL_SCALE, env->y * PIXEL_SCALE},
+            // Adjust angles for flipped Y
+            float start_angle = (-env->angle) * 180 / M_PI;
+            float end_angle = (-env->angle - M_PI/2) * 180 / M_PI;
+            DrawRing((Vector2){screen_x, screen_y},
                      ROOMBA_INNER_RADIUS * PIXEL_SCALE,
                      ROOMBA_OUTER_RADIUS * PIXEL_SCALE,
                      start_angle, end_angle, 16, bumper_color);
         }
         if (env->right_bumper) {
-            // Draw right bumper arc (front-right quadrant)
-            float start_angle = (env->angle - M_PI/2) * 180 / M_PI;
-            float end_angle = (env->angle) * 180 / M_PI;
-            DrawRing((Vector2){env->x * PIXEL_SCALE, env->y * PIXEL_SCALE},
+            float start_angle = (-env->angle + M_PI/2) * 180 / M_PI;
+            float end_angle = (-env->angle) * 180 / M_PI;
+            DrawRing((Vector2){screen_x, screen_y},
                      ROOMBA_INNER_RADIUS * PIXEL_SCALE,
                      ROOMBA_OUTER_RADIUS * PIXEL_SCALE,
                      start_angle, end_angle, 16, bumper_color);
         }
     }
 
-    // Draw direction indicator
+    // Draw direction indicator (adjust for flipped Y)
     float end_x = env->x + cosf(env->angle) * ROOMBA_INNER_RADIUS * 0.8f;
     float end_y = env->y + sinf(env->angle) * ROOMBA_INNER_RADIUS * 0.8f;
     DrawLineEx(
-        (Vector2){env->x * PIXEL_SCALE, env->y * PIXEL_SCALE},
-        (Vector2){end_x * PIXEL_SCALE, end_y * PIXEL_SCALE},
+        (Vector2){screen_x, screen_y},
+        (Vector2){end_x * PIXEL_SCALE, FLIP_Y(end_y * PIXEL_SCALE)},
         3, WHITE
     );
 
-    // Draw stats
+    // UI text (unchanged)
     char text[256];
     snprintf(text, sizeof(text), "Coverage: %.1f%% | Reward: %.2f | Step: %d",
              estimate_coverage(env) * 100,
              env->episode_return, env->tick);
     DrawText(text, 10, 10, 20, WHITE);
 
-    // Draw bumper status
     char bumper_text[128];
     snprintf(bumper_text, sizeof(bumper_text), "Bumpers: L:%s R:%s",
              env->left_bumper ? "HIT" : "OK",
              env->right_bumper ? "HIT" : "OK");
     DrawText(bumper_text, 10, 35, 16, env->left_bumper || env->right_bumper ? RED : GREEN);
 
+    #undef FLIP_Y
     EndDrawing();
 }
 
