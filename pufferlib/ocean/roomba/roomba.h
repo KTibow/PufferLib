@@ -101,21 +101,11 @@ float estimate_coverage(Roomba* env) {
 }
 
 void c_reset(Roomba* env) {
-    // Make the robot start in one of the corners always
-    int corner = rand() % 2;
+    // Make the robot start at bottom left
     float margin = ROOMBA_INNER_RADIUS + 5; // Small margin from wall
-    switch (corner) {
-        case 0: // Bottom-left
-            env->x = margin;
-            env->y = ROOM_SIZE - margin;
-            env->angle = -M_PI / 2.0f; // Facing up
-            break;
-        case 1: // Top-left
-            env->x = margin;
-            env->y = margin;
-            env->angle = M_PI / 2.0f; // Facing down
-            break;
-    }
+    env->x = margin;
+    env->y = ROOM_SIZE - margin;
+    env->angle = -M_PI / 2.0f; // Facing up
     env->vx = 0;
     env->vy = 0;
     env->vangle = 0;
@@ -171,7 +161,7 @@ void c_step(Roomba* env) {
     // Check left bumper (front-left of roomba) - uses outer radius
     // Cast a range of points along the left bumper arc
     for (float offset = 0; offset <= M_PI/2; offset += M_PI/16) {
-        float angle = new_angle + M_PI/4 - offset;
+        float angle = new_angle + offset;
         float left_bump_x = new_x + ROOMBA_OUTER_RADIUS * cosf(angle);
         float left_bump_y = new_y + ROOMBA_OUTER_RADIUS * sinf(angle);
         if (left_bump_x <= 0 || left_bump_x >= ROOM_SIZE ||
@@ -184,7 +174,7 @@ void c_step(Roomba* env) {
     // Check right bumper (front-right of roomba) - uses outer radius
     // Cast a range of points along the right bumper arc
     for (float offset = 0; offset <= M_PI/2; offset += M_PI/16) {
-        float angle = new_angle - M_PI/4 + offset;
+        float angle = new_angle - offset;
         float right_bump_x = new_x + ROOMBA_OUTER_RADIUS * cosf(angle);
         float right_bump_y = new_y + ROOMBA_OUTER_RADIUS * sinf(angle);
         if (right_bump_x <= 0 || right_bump_x >= ROOM_SIZE ||
