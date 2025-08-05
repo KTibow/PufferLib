@@ -11,6 +11,6 @@ static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
 static int my_log(PyObject* dict, Log* log) {
     assign_to_dict(dict, "episode_return", log->episode_return);
     assign_to_dict(dict, "episode_length", log->episode_length);
-    assign_to_dict(dict, "dirt_collected", log->dirt_collected);
+    assign_to_dict(dict, "coverage_percentage", log->coverage_percentage);
     return 0;
 }
