@@ -169,19 +169,29 @@ void c_step(Roomba* env) {
     int hit_wall = 0;
 
     // Check left bumper (front-left of roomba) - uses outer radius
-    float left_bump_x = new_x + ROOMBA_OUTER_RADIUS * cosf(new_angle + M_PI/4);
-    float left_bump_y = new_y + ROOMBA_OUTER_RADIUS * sinf(new_angle + M_PI/4);
-    if (left_bump_x <= 0 || left_bump_x >= ROOM_SIZE ||
-        left_bump_y <= 0 || left_bump_y >= ROOM_SIZE) {
-        env->left_bumper = 1;
+    // Cast a range of points along the left bumper arc
+    for (float offset = 0; offset <= M_PI/2; offset += M_PI/16) {
+        float angle = new_angle + M_PI/4 - offset;
+        float left_bump_x = new_x + ROOMBA_OUTER_RADIUS * cosf(angle);
+        float left_bump_y = new_y + ROOMBA_OUTER_RADIUS * sinf(angle);
+        if (left_bump_x <= 0 || left_bump_x >= ROOM_SIZE ||
+            left_bump_y <= 0 || left_bump_y >= ROOM_SIZE) {
+            env->left_bumper = 1;
+            break;
+        }
     }
 
-    // Check right bumper (front-right of roomba) - uses outer radius  
-    float right_bump_x = new_x + ROOMBA_OUTER_RADIUS * cosf(new_angle - M_PI/4);
-    float right_bump_y = new_y + ROOMBA_OUTER_RADIUS * sinf(new_angle - M_PI/4);
-    if (right_bump_x <= 0 || right_bump_x >= ROOM_SIZE ||
-        right_bump_y <= 0 || right_bump_y >= ROOM_SIZE) {
-        env->right_bumper = 1;
+    // Check right bumper (front-right of roomba) - uses outer radius
+    // Cast a range of points along the right bumper arc
+    for (float offset = 0; offset <= M_PI/2; offset += M_PI/16) {
+        float angle = new_angle - M_PI/4 + offset;
+        float right_bump_x = new_x + ROOMBA_OUTER_RADIUS * cosf(angle);
+        float right_bump_y = new_y + ROOMBA_OUTER_RADIUS * sinf(angle);
+        if (right_bump_x <= 0 || right_bump_x >= ROOM_SIZE ||
+            right_bump_y <= 0 || right_bump_y >= ROOM_SIZE) {
+            env->right_bumper = 1;
+            break;
+        }
     }
 
     // Movement collision detection - robot stops at inner radius
@@ -331,11 +341,11 @@ void c_render(Roomba* env) {
     // Draw roomba - inner radius (movement boundary) in dark green
     DrawCircle(env->x * PIXEL_SCALE, env->y * PIXEL_SCALE,
                ROOMBA_INNER_RADIUS * PIXEL_SCALE, DARKGREEN);
-    
+
     // Draw outer radius (bumper zone) as ring
     DrawCircleLines(env->x * PIXEL_SCALE, env->y * PIXEL_SCALE,
                     ROOMBA_OUTER_RADIUS * PIXEL_SCALE, GRAY);
-    
+
     // Highlight bumper zones if active
     if (env->left_bumper || env->right_bumper) {
         Color bumper_color = RED;
@@ -374,11 +384,11 @@ void c_render(Roomba* env) {
              estimate_coverage(env) * 100,
              env->episode_return, env->tick);
     DrawText(text, 10, 10, 20, WHITE);
-    
+
     // Draw bumper status
     char bumper_text[128];
-    snprintf(bumper_text, sizeof(bumper_text), "Bumpers: L:%s R:%s", 
-             env->left_bumper ? "HIT" : "OK", 
+    snprintf(bumper_text, sizeof(bumper_text), "Bumpers: L:%s R:%s",
+             env->left_bumper ? "HIT" : "OK",
              env->right_bumper ? "HIT" : "OK");
     DrawText(bumper_text, 10, 35, 16, env->left_bumper || env->right_bumper ? RED : GREEN);
 
