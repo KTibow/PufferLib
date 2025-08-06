@@ -14,9 +14,9 @@
 // Environment constants (in mm)
 #define ROOM_SIZE 1500.0f       // Fixed square room for simplicity
 #define ROOMBA_OUTER_RADIUS 150.0f  // Outer radius - bumper activation zone
-#define ROOMBA_INNER_RADIUS 120.0f  // Inner radius - movement boundary
+#define ROOMBA_INNER_RADIUS 140.0f  // Inner radius - movement boundary
 #define MAX_SPEED 250.0f        // mm/s max wheel speed
-#define WHEELBASE 100.0f        // Distance between wheels
+#define WHEELBASE 130.0f        // Distance between wheels
 // #define SENSOR_RANGE 500.0f     // How far sensors can see
 #define dt 0.05f                // Time step
 
@@ -102,7 +102,7 @@ float estimate_coverage(Roomba* env) {
 
 void c_reset(Roomba* env) {
     // Make the robot start at bottom left
-    float margin = ROOMBA_INNER_RADIUS + 5; // Small margin from wall
+    float margin = ROOMBA_OUTER_RADIUS + 5; // Small margin from wall
     env->x = margin;
     env->y = ROOM_SIZE - margin;
     env->angle = -M_PI / 2.0f; // Facing down
