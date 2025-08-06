@@ -287,7 +287,7 @@ void c_render(Roomba* env) {
 
     if (!IsWindowReady()) {
         InitWindow(window_size, window_size, "Simple Roomba");
-        SetTargetFPS(20);
+        SetTargetFPS((int)(1.0f / dt));
     }
 
     if (WindowShouldClose() || IsKeyPressed(KEY_ESCAPE)) {
