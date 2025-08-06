@@ -105,7 +105,7 @@ void c_reset(Roomba* env) {
     float margin = ROOMBA_INNER_RADIUS + 5; // Small margin from wall
     env->x = margin;
     env->y = ROOM_SIZE - margin;
-    env->angle = M_PI / 2.0f; // Facing down
+    env->angle = -M_PI / 2.0f; // Facing down
     env->vx = 0;
     env->vy = 0;
     env->vangle = 0;
