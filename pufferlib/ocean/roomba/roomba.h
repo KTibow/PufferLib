@@ -33,7 +33,7 @@ typedef struct {
 
 typedef struct {
     Log log;
-    float* observations;     // 2D: [left_bumper, right_bumper] binary 0/1
+    float* observations;     // 4D: [left_bumper, right_bumper, sin(angle), cos(angle)]
     float* actions;          // 2D: [left_wheel, right_wheel] in [-1, 1]
     float* rewards;
     unsigned char* terminals;
@@ -124,9 +124,11 @@ void c_reset(Roomba* env) {
     // Clear coverage grid
     memset(env->coverage_grid, 0, sizeof(env->coverage_grid));
 
-    // Set initial observations: [left_bumper, right_bumper]
-    env->observations[0] = 0.0f;  // Left bumper not pressed initially
-    env->observations[1] = 0.0f;  // Right bumper not pressed initially
+    // Set initial observations: [left_bumper, right_bumper, sin(angle), cos(angle)]
+    env->observations[0] = 0.0f;                // Left bumper not pressed initially
+    env->observations[1] = 0.0f;                // Right bumper not pressed initially
+    env->observations[2] = sinf(env->angle);    // sin(angle)
+    env->observations[3] = cosf(env->angle);    // cos(angle)
 }
 
 void c_step(Roomba* env) {
@@ -262,9 +264,11 @@ void c_step(Roomba* env) {
     env->rewards[0] = reward;
     env->episode_return += reward;
 
-    // Update observations: [left_bumper, right_bumper]
+    // Update observations: [left_bumper, right_bumper, sin(angle), cos(angle)]
     env->observations[0] = env->left_bumper ? 1.0f : 0.0f;
     env->observations[1] = env->right_bumper ? 1.0f : 0.0f;
+    env->observations[2] = sinf(env->angle);
+    env->observations[3] = cosf(env->angle);
 
     // Check termination: 100% coverage or max steps
     if (env->tick >= env->max_steps || coverage >= 0.999f) {
