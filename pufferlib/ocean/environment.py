@@ -141,6 +141,7 @@ MAKE_FUNCTIONS = {
     'g2048': 'G2048',
     'terraform': 'Terraform',
     'template': 'Template',
+    'docking': 'Docking',
     'tripletriad': 'TripleTriad',
     'tactical': 'Tactical',
     'target': 'Target',
