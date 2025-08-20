@@ -2,18 +2,28 @@
 Opcodes for the iRobot Create 2.
 """
 
+UNSIGNED_1 = '>B', 1
+# SIGNED_1 = '>b', 1
+UNSIGNED_2 = '>H', 2
+SIGNED_2 = '>h', 2
+
 PACKETS = {
-    7: ('>B', 1),
-    15: ('>B', 1),
-    43: ('>h', 2),
-    44: ('>h', 2),
-    45: ('>B', 1),
-    46: ('>H', 2),
-    47: ('>H', 2),
-    48: ('>H', 2),
-    49: ('>H', 2),
-    50: ('>H', 2),
-    51: ('>H', 2),
+    7: UNSIGNED_1, # Bumps and Wheel Drops
+    15: UNSIGNED_1, # Dirt Detect
+    17: UNSIGNED_1, # Infrared Character
+    25: UNSIGNED_2, # Battery Charge
+    26: UNSIGNED_2, # Battery Capacity
+    43: SIGNED_2,
+    44: SIGNED_2,
+    45: UNSIGNED_1,
+    46: UNSIGNED_2,
+    47: UNSIGNED_2,
+    48: UNSIGNED_2,
+    49: UNSIGNED_2,
+    50: UNSIGNED_2,
+    51: UNSIGNED_2,
+    52: UNSIGNED_1, # Infrared Character Left
+    53: UNSIGNED_1, # Infrared Character Right
 }
 
 OPCODE_START: bytes = (128).to_bytes(1, "big")
