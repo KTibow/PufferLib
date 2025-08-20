@@ -1,4 +1,4 @@
-#include "template.h"
+#include "docking.h"
 
 #define Env Docking
 #include "../env_binding.h"
