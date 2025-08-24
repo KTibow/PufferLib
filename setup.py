@@ -234,8 +234,8 @@ if not NO_TRAIN:
         ),
     ]
 
-# Prevent Conda from injecting garbage compile flags
 if system != 'Windows':
+    # Prevent Conda from injecting garbage compile flags
     from distutils.sysconfig import get_config_vars
     cfg_vars = get_config_vars()
     for key in ('CC', 'CXX', 'LDSHARED'):
