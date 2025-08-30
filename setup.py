@@ -31,10 +31,15 @@ RAYLIB_URL = 'https://github.com/raysan5/raylib/releases/download/5.5/'
 system = platform.system()
 if system == 'Linux':
     RAYLIB_NAME = 'raylib-5.5_linux_amd64'
+    RAYLIB_EXT = '.tar.gz'
 elif system == 'Darwin':
     RAYLIB_NAME = 'raylib-5.5_macos'
+    RAYLIB_EXT = '.tar.gz'
 elif system == 'Windows':
     RAYLIB_NAME = 'raylib-5.5_win64_msvc16'
+    RAYLIB_EXT = '.zip'
+else:
+    raise RuntimeError(f"{system} is unsupported")
 
 RLIGHTS_URL = 'https://raw.githubusercontent.com/raysan5/raylib/refs/heads/master/examples/shaders/rlights.h'
 
@@ -54,7 +59,7 @@ def download_raylib(platform, ext):
 
 if not NO_OCEAN:
     download_raylib('raylib-5.5_webassembly', '.zip')
-    download_raylib(RAYLIB_NAME, '.tar.gz')
+    download_raylib(RAYLIB_NAME, RAYLIB_EXT)
 
 BOX2D_URL = 'https://github.com/capnspacehook/box2d/releases/latest/download/'
 BOX2D_NAME = 'box2d-macos-arm64' if platform.system() == "Darwin" else 'box2d-linux-amd64'
