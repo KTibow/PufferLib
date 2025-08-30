@@ -30,7 +30,7 @@ NO_TRAIN = os.getenv("NO_TRAIN", "0") == "1"
 RAYLIB_URL = 'https://github.com/raysan5/raylib/releases/download/5.5/'
 system = platform.system()
 machine = platform.machine().lower()
-is_arm = "aarch64" in machine
+is_arm = machine in ["arm64", "aarch64"]
 if system == 'Linux':
     RAYLIB_NAME = 'raylib-5.5_linux_arm64' if is_arm else 'raylib-5.5_linux_amd64'
     RAYLIB_EXT = '.tar.gz'
@@ -41,7 +41,7 @@ elif system == 'Windows':
     RAYLIB_NAME = 'raylib-5.5_winarm64_msvc16' if is_arm else 'raylib-5.5_win64_msvc16'
     RAYLIB_EXT = '.zip'
 else:
-    raise RuntimeError(f"{system} is unsupported")
+    raise RuntimeError(f"Unsupported system: {system}")
 
 RLIGHTS_URL = 'https://raw.githubusercontent.com/raysan5/raylib/refs/heads/master/examples/shaders/rlights.h'
 
@@ -148,8 +148,6 @@ elif system == 'Darwin':
         '-framework', 'OpenGL',
         '-framework', 'IOKit',
     ]
-else:
-    raise ValueError(f'Unsupported system: {system}')
 
 # Default Gym/Gymnasium/PettingZoo versions
 # Gym:
