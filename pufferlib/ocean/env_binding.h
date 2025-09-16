@@ -205,6 +205,7 @@ static PyObject* env_step(PyObject* self, PyObject* args) {
 }
 
 // Python function to step the environment
+#ifndef NO_OPTICS
 static PyObject* env_render(PyObject* self, PyObject* args) {
     Env* env = unpack_env(args);
     if (!env){
@@ -213,6 +214,7 @@ static PyObject* env_render(PyObject* self, PyObject* args) {
     c_render(env);
     Py_RETURN_NONE;
 }
+#endif
 
 // Python function to close the environment
 static PyObject* env_close(PyObject* self, PyObject* args) {
@@ -523,6 +525,7 @@ static PyObject* vec_step(PyObject* self, PyObject* arg) {
     Py_RETURN_NONE;
 }
 
+#ifndef NO_OPTICS
 static PyObject* vec_render(PyObject* self, PyObject* args) {
     int num_args = PyTuple_Size(args);
     if (num_args != 2) {
@@ -546,6 +549,7 @@ static PyObject* vec_render(PyObject* self, PyObject* args) {
     c_render(vec->envs[env_id]);
     Py_RETURN_NONE;
 }
+#endif
 
 static int assign_to_dict(PyObject* dict, char* key, float value) {
     PyObject* v = PyFloat_FromDouble(value);
@@ -645,7 +649,9 @@ static PyMethodDef methods[] = {
     {"env_init", (PyCFunction)env_init, METH_VARARGS | METH_KEYWORDS, "Init environment with observation, action, reward, terminal, truncation arrays"},
     {"env_reset", env_reset, METH_VARARGS, "Reset the environment"},
     {"env_step", env_step, METH_VARARGS, "Step the environment"},
+#ifndef NO_OPTICS
     {"env_render", env_render, METH_VARARGS, "Render the environment"},
+#endif
     {"env_close", env_close, METH_VARARGS, "Close the environment"},
     {"env_get", env_get, METH_VARARGS, "Get the environment state"},
     {"env_put", (PyCFunction)env_put, METH_VARARGS | METH_KEYWORDS, "Put stuff into env"},
@@ -654,7 +660,9 @@ static PyMethodDef methods[] = {
     {"vec_reset", vec_reset, METH_VARARGS, "Reset the vector of environments"},
     {"vec_step", vec_step, METH_VARARGS, "Step the vector of environments"},
     {"vec_log", vec_log, METH_VARARGS, "Log the vector of environments"},
+#ifndef NO_OPTICS
     {"vec_render", vec_render, METH_VARARGS, "Render the vector of environments"},
+#endif
     {"vec_close", vec_close, METH_VARARGS, "Close the vector of environments"},
     {"shared", (PyCFunction)my_shared, METH_VARARGS | METH_KEYWORDS, "Shared state"},
     MY_METHODS,
