@@ -21,6 +21,9 @@ from torch.utils.cpp_extension import (
     CUDA_HOME,
 )
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 # Build with DEBUG=1 to enable debug symbols
 DEBUG = os.getenv("DEBUG", "0") == "1"
 NO_OCEAN = os.getenv("NO_OCEAN", "0") == "1"
@@ -59,6 +62,8 @@ if not NO_OCEAN:
     download_raylib(RAYLIB_NAME, '.tar.gz')
 
 system = platform.system()
+machine = platform.machine().lower()
+is_arm = machine in ["arm64", "aarch64"]
 if system == 'Linux':
     RAYLIB_NAME = 'raylib-5.5_linux_amd64'
 elif system == 'Darwin':
@@ -69,7 +74,14 @@ else:
     raise ValueError(f'Unsupported system: {system}')
 
 BOX2D_URL = 'https://github.com/KTibow/box2d/releases/latest/download/'
-BOX2D_NAME = 'box2d-macos-arm64' if platform.system() == "Darwin" else 'box2d-linux-amd64'
+if system == 'Linux':
+    BOX2D_NAME = 'box2d-linux-arm64' if is_arm else 'box2d-linux-amd64'
+elif system == 'Darwin':
+    BOX2D_NAME = 'box2d-macos-arm64'
+elif system == 'Windows':
+    BOX2D_NAME = 'box2d-windows-arm64' if is_arm else 'box2d-windows-amd64'
+else:
+    raise ValueError(f'Unsupported system: {system}')
 
 def download_box2d(platform):
     if not os.path.exists(platform):
