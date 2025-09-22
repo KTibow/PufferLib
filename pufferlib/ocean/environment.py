@@ -168,6 +168,7 @@ MAKE_FUNCTIONS = {
     'chain_mdp': 'Chain',
     'spaces': make_spaces,
     'multiagent': make_multiagent,
+    'slimevolley': 'SlimeVolley',
 }
 
 def env_creator(name='squared', *args, **kwargs):
