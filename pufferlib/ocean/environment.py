@@ -129,6 +129,7 @@ MAKE_FUNCTIONS = {
     'blastar': 'Blastar',
     'convert': 'Convert',
     'convert_circle': 'ConvertCircle',
+    'docking': 'Docking',
     'pong': 'Pong',
     'freeway': 'Freeway',
     'enduro': 'Enduro',

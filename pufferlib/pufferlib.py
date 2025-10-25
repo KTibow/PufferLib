@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from collections.abc import Mapping
 from io import StringIO
 from functools import wraps
+from typing import Any
 
 import numpy as np
 import gymnasium
@@ -43,7 +44,27 @@ def set_buffers(env, buf=None):
         env.actions = buf['actions']
 
 class PufferEnv:
-    def __init__(self, buf=None):
+    # Attributes set by subclass before __init__
+    single_observation_space: gymnasium.spaces.Space[Any]
+    single_action_space: gymnasium.spaces.Space[Any]
+    render_mode: str | None
+    num_agents: int
+
+    # Attributes set dynamically by set_buffers()
+    observations: np.ndarray[Any, np.dtype[Any]]
+    actions: np.ndarray[Any, np.dtype[Any]]
+    rewards: np.ndarray[Any, np.dtype[np.float32]]
+    terminals: np.ndarray[Any, np.dtype[np.bool_]]
+    truncations: np.ndarray[Any, np.dtype[np.bool_]]
+    masks: np.ndarray[Any, np.dtype[np.bool_]]
+
+    # Attributes set by __init__
+    action_space: gymnasium.spaces.Space[Any]
+    observation_space: gymnasium.spaces.Space[Any]
+    agent_ids: np.ndarray[Any, np.dtype[np.intp]]
+    infos: list[dict[str, Any]]
+
+    def __init__(self, buf: dict[str, np.ndarray[Any, Any]] | None = None) -> None:
         if not hasattr(self, 'single_observation_space'):
             raise APIUsageError(ENV_ERROR.format('single_observation_space'))
         if not hasattr(self, 'single_action_space'):
@@ -71,42 +92,42 @@ class PufferEnv:
         self.agent_ids = np.arange(self.num_agents)
 
     @property
-    def agent_per_batch(self):
+    def agent_per_batch(self) -> int:
         return self.num_agents
 
     @property
-    def emulated(self):
+    def emulated(self) -> bool:
         '''Native envs do not use emulation'''
         return False
 
     @property
-    def done(self):
+    def done(self) -> bool:
         '''Native envs handle resets internally'''
         return False
 
     @property
-    def driver_env(self):
+    def driver_env(self) -> "PufferEnv":
         '''For compatibility with Multiprocessing'''
         return self
 
-    def reset(self, seed=None):
+    def reset(self, seed: int | None = None) -> tuple[np.ndarray[Any, Any], list[dict[str, Any]]]:
         raise NotImplementedError
 
-    def step(self, actions):
+    def step(self, actions: np.ndarray[Any, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], list[dict[str, Any]]]:
         raise NotImplementedError
 
-    def close(self):
+    def close(self) -> None:
         raise NotImplementedError
 
-    def async_reset(self, seed=None):
+    def async_reset(self, seed: int | None = None) -> None:
         _, self.infos = self.reset(seed)
         assert isinstance(self.infos, list), 'PufferEnvs must return info as a list of dicts'
 
-    def send(self, actions):
+    def send(self, actions: np.ndarray[Any, Any]) -> None:
         _, _, _, _, self.infos = self.step(actions)
         assert isinstance(self.infos, list), 'PufferEnvs must return info as a list of dicts'
 
-    def recv(self):
+    def recv(self) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], list[dict[str, Any]], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
         return (self.observations, self.rewards, self.terminals,
             self.truncations, self.infos, self.agent_ids, self.masks)
 

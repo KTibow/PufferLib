@@ -1,0 +1,8 @@
+-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
+-DPLATFORM_DESKTOP
+-Iraylib-6.0_linux_arm64/include
+-Ibox2d-linux-arm64/include
+-Ibox2d-linux-arm64/src
+-I/home/kendell/.local/share/uv/python/cpython-3.12.0-linux-aarch64-gnu/include/python3.12
+-I.venv/lib/python3.12/site-packages/numpy/core/include
+-xc

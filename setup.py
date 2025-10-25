@@ -22,6 +22,9 @@ from torch.utils.cpp_extension import (
     ROCM_HOME
 )
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 # build cuda extension if torch can find CUDA or HIP/ROCM in the system
 # may require `uv pip install --no-build-isolation` or `python setup.py build_ext --inplace`
 BUID_CUDA_EXT = bool(CUDA_HOME or ROCM_HOME)
@@ -34,8 +37,10 @@ NO_TRAIN = os.getenv("NO_TRAIN", "0") == "1"
 # Build raylib for your platform
 RAYLIB_URL = 'https://github.com/raysan5/raylib/releases/download/5.5/'
 system = platform.system()
+machine = platform.machine().lower()
+is_arm = machine in ["arm64", "aarch64"]
 if system == 'Linux':
-    RAYLIB_NAME = 'raylib-5.5_linux_amd64'
+    RAYLIB_NAME = 'raylib-6.0_linux_arm64' if is_arm else 'raylib-5.5_linux_amd64'
 elif system == 'Darwin':
     RAYLIB_NAME = 'raylib-5.5_macos'
 elif system == 'Windows':
@@ -61,8 +66,15 @@ if not NO_OCEAN:
     download_raylib('raylib-5.5_webassembly', '.zip')
     download_raylib(RAYLIB_NAME, '.tar.gz' if platform.system() != "Windows" else '.zip')
 
-BOX2D_URL = 'https://github.com/capnspacehook/box2d/releases/latest/download/'
-BOX2D_NAME = 'box2d-macos-arm64' if platform.system() == "Darwin" else 'box2d-linux-amd64'
+BOX2D_URL = 'https://github.com/KTibow/box2d/releases/latest/download/'
+if system == 'Linux':
+    BOX2D_NAME = 'box2d-linux-arm64' if is_arm else 'box2d-linux-amd64'
+elif system == 'Darwin':
+    BOX2D_NAME = 'box2d-macos-arm64'
+elif system == 'Windows':
+    BOX2D_NAME = 'box2d-windows-arm64' if is_arm else 'box2d-windows-amd64'
+else:
+    raise ValueError(f'Unsupported system: {system}')
 
 def download_box2d(platform):
     if not os.path.exists(platform):
