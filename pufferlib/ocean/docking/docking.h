@@ -70,6 +70,30 @@ float calculate_angle_error(Docking* env) {
     return normalize_angle(env->goal_theta - env->theta);
 }
 
+// Helper: update observations with ego-centric measurements
+void update_observations(Docking* env) {
+    // Calculate distance and bearing to goal
+    float dx = env->goal_x - env->x;
+    float dy = env->goal_y - env->y;
+    float distance = sqrtf(dx*dx + dy*dy);
+
+    // Normalize distance by arena diagonal
+    float max_distance = sqrtf(ARENA_WIDTH * ARENA_WIDTH + ARENA_HEIGHT * ARENA_HEIGHT);
+    float distance_norm = distance / max_distance;
+
+    // Bearing: angle from robot's heading to goal (in robot's reference frame)
+    float bearing = normalize_angle(atan2f(dy, dx) - env->theta);
+
+    // Heading error: how much to rotate to match goal orientation
+    float heading_error = calculate_angle_error(env);
+
+    // Set observations: [distance_norm, sin(bearing), cos(bearing), heading_error]
+    env->observations[0] = distance_norm;
+    env->observations[1] = sinf(bearing);
+    env->observations[2] = cosf(bearing);
+    env->observations[3] = heading_error;
+}
+
 void c_reset(Docking* env) {
     // Random robot start position (away from edges, with guaranteed space)
     float margin = ROBOT_RADIUS + 10.0f;
@@ -117,14 +141,7 @@ void c_reset(Docking* env) {
     env->prev_angle_error = calculate_angle_error(env);
 
     // Set initial observations
-    env->observations[0] = env->x / ARENA_WIDTH;
-    env->observations[1] = env->y / ARENA_HEIGHT;
-    env->observations[2] = sinf(env->theta);
-    env->observations[3] = cosf(env->theta);
-    env->observations[4] = env->goal_x / ARENA_WIDTH;
-    env->observations[5] = env->goal_y / ARENA_HEIGHT;
-    env->observations[6] = sinf(env->goal_theta);
-    env->observations[7] = cosf(env->goal_theta);
+    update_observations(env);
 }
 
 void c_step(Docking* env) {
@@ -214,14 +231,7 @@ void c_step(Docking* env) {
     }
 
     // Update observations
-    env->observations[0] = env->x / ARENA_WIDTH;
-    env->observations[1] = env->y / ARENA_HEIGHT;
-    env->observations[2] = sinf(env->theta);
-    env->observations[3] = cosf(env->theta);
-    env->observations[4] = env->goal_x / ARENA_WIDTH;
-    env->observations[5] = env->goal_y / ARENA_HEIGHT;
-    env->observations[6] = sinf(env->goal_theta);
-    env->observations[7] = cosf(env->goal_theta);
+    update_observations(env);
 }
 
 void c_render(Docking* env) {
