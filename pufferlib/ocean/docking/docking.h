@@ -262,6 +262,8 @@ void c_step(Docking* env) {
     // Max angle error is PI, max change is ~0.1 rad/step → scale similarly
     reward += (fabsf(env->prev_angle_error) - fabsf(angle_error)) * 0.5f / 1000.0f;
 
+    reward -= 0.01f;
+
     env->rewards[0] = reward;
 
     // Update tracking for next step
@@ -269,29 +271,24 @@ void c_step(Docking* env) {
     env->prev_angle_error = angle_error;
 
     // Check success condition
-    int success = (distance < SUCCESS_DISTANCE) && (fabsf(angle_error) < SUCCESS_ANGLE);
-
-    // Check failure conditions
-    int out_of_bounds = (env->x < 0 || env->x > ARENA_WIDTH ||
-                         env->y < 0 || env->y > ARENA_HEIGHT);
-    int timeout = (env->step_count >= MAX_STEPS);
-
-    if (success) {
+    if (distance < SUCCESS_DISTANCE) {
         float bonus = 1.0f;
-        bonus -= fabsf(angle_error) / SUCCESS_ANGLE * 0.5f;
-        // float speeding_min = 100.0f * DT;
-        // float speeding_max = MAX_WHEEL_SPEED;
-        // if (v > speeding_min) {
-        //     bonus -= (v - speeding_min) / (speeding_max - speeding_min) * 0.5f;
-        // }
+        bonus -= fabsf(angle_error) / SUCCESS_ANGLE;
+        if (bonus < 0.0f) bonus = 0.0f;
         env->rewards[0] += bonus;
         env->terminals[0] = 1;
-        env->log.score += 1.0f;
+        if (fabsf(angle_error) < SUCCESS_ANGLE) {
+            env->log.score += 1.0f;
+        }
         env->log.n += 1.0f;
         c_reset(env);
         return;
     }
 
+    // Check failure conditions
+    int out_of_bounds = (env->x < 0 || env->x > ARENA_WIDTH ||
+                         env->y < 0 || env->y > ARENA_HEIGHT);
+    int timeout = (env->step_count >= MAX_STEPS);
     if (out_of_bounds || timeout) {
         env->rewards[0] -= 1.0f;
         env->terminals[0] = 1;
