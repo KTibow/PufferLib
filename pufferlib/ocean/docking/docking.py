@@ -17,9 +17,9 @@ class Docking(pufferlib.PufferEnv):
         buf: dict[str, np.ndarray[Any, Any]] | None = None,
         seed: int = 0,
     ):
-        # Observation: [distance_norm, sin(bearing), cos(bearing), heading_error]
+        # Observation: [force_field, green_buoy, red_buoy, angled_active, wall_nearby] (all binary 0/1)
         self.single_observation_space = gymnasium.spaces.Box(
-            low=-1.0, high=1.0, shape=(4,), dtype=np.float32
+            low=0.0, high=1.0, shape=(5,), dtype=np.float32
         )
         # Action: [left_wheel, right_wheel] each in [-1, 1]
         self.single_action_space = gymnasium.spaces.Box(
